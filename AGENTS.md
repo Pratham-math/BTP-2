@@ -1,8 +1,8 @@
 # Project working instructions
 
 Build the small prompt-to-video MVP only. The current scope is one text prompt,
-Gemini-written slide content and narration, Gemini speech, Pillow slides, FFmpeg
-rendering, and one playable/downloadable MP4. Do not add quizzes, accounts,
+Gemini-written visual plans and narration, Gemini speech, local Manim animations,
+Pillow slides for older saved jobs, FFmpeg rendering, and one playable/downloadable MP4. Do not add quizzes, accounts,
 uploads, a database, or a worker framework yet.
 
 Keep the React interface and FastAPI implementation small and explainable.

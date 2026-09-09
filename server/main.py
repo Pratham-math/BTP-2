@@ -1,21 +1,23 @@
 import os
+from importlib.util import find_spec
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from server.generator import run_generation
 from server.storage import Storage, public_status
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-load_dotenv(PROJECT_DIR / ".env")
+ENV_FILE = PROJECT_DIR / ".env"
+load_dotenv(ENV_FILE)
 
 configured_data_dir = Path(os.getenv("DATA_DIR", "./data"))
 if not configured_data_dir.is_absolute():
@@ -46,6 +48,10 @@ class VideoRequest(BaseModel):
         return prompt
 
 
+class ApiKeyRequest(BaseModel):
+    api_key: SecretStr
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {
@@ -53,7 +59,36 @@ def health() -> dict:
         "gemini_configured": bool(valid_api_key()),
         "ffmpeg": executable_available("ffmpeg"),
         "ffprobe": executable_available("ffprobe"),
+        "manim": find_spec("manim") is not None,
     }
+
+
+@app.get("/api/settings")
+def get_settings() -> dict:
+    return {"api_key_configured": bool(valid_api_key())}
+
+
+@app.put("/api/settings/api-key")
+def update_api_key(request: ApiKeyRequest) -> dict:
+    api_key = request.api_key.get_secret_value().strip()
+    if len(api_key) < 10 or len(api_key) > 512 or api_key == "put_your_key_here":
+        raise HTTPException(422, "Enter a valid Gemini API key.")
+
+    try:
+        ENV_FILE.touch(exist_ok=True)
+        saved, _, _ = set_key(
+            str(ENV_FILE),
+            "GEMINI_API_KEY",
+            api_key,
+            quote_mode="always",
+        )
+        if not saved:
+            raise OSError("Could not update the environment file")
+    except OSError as error:
+        raise HTTPException(500, "The API key could not be saved on the server.") from error
+
+    os.environ["GEMINI_API_KEY"] = api_key
+    return {"api_key_configured": True}
 
 
 @app.post("/api/videos", status_code=202)
@@ -62,10 +97,12 @@ def create_video(request: VideoRequest, background_tasks: BackgroundTasks) -> di
     if not api_key:
         raise HTTPException(
             503,
-            "Gemini is not configured. Copy .env.example to .env and set GEMINI_API_KEY.",
+            "Gemini is not configured. Add an API key in Settings.",
         )
     if not executable_available("ffmpeg") or not executable_available("ffprobe"):
         raise HTTPException(503, "FFmpeg and ffprobe must be installed and available on PATH.")
+    if find_spec("manim") is None:
+        raise HTTPException(503, "Animation support is missing. Install the server requirements and restart it.")
     if not generation_lock.acquire(blocking=False):
         raise HTTPException(409, "Another video is being generated. Wait for it to finish.")
 
@@ -111,7 +148,7 @@ def get_video_status(job_id: str) -> dict:
 def retry_video(job_id: str, background_tasks: BackgroundTasks) -> dict:
     api_key = valid_api_key()
     if not api_key:
-        raise HTTPException(503, "Gemini is not configured. Set GEMINI_API_KEY in .env.")
+        raise HTTPException(503, "Gemini is not configured. Add an API key in Settings.")
     try:
         status = storage.read_status(job_id)
         prompt = (storage.job_dir(job_id) / "prompt.txt").read_text(encoding="utf-8")

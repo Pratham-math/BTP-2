@@ -3,6 +3,7 @@
 .venv-wsl/
 __pycache__/
 .pytest_cache/
+.run/
 *.pyc
 client/node_modules/
 client/dist/

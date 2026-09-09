@@ -23,7 +23,30 @@ def test_missing_key_has_a_clear_error(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     response = client.post("/api/videos", json={"prompt": "Explain photosynthesis"})
     assert response.status_code == 503
-    assert "GEMINI_API_KEY" in response.json()["detail"]
+    assert "Settings" in response.json()["detail"]
+
+
+def test_api_key_can_be_saved_without_being_returned(tmp_path: Path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("GEMINI_VOICE=Kore\n", encoding="utf-8")
+    monkeypatch.setattr(main, "ENV_FILE", env_file)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    api_key = "test-gemini-key-12345"
+    response = client.put("/api/settings/api-key", json={"api_key": api_key})
+
+    assert response.status_code == 200
+    assert response.json() == {"api_key_configured": True}
+    assert api_key not in response.text
+    assert api_key in env_file.read_text(encoding="utf-8")
+    assert client.get("/api/settings").json() == {"api_key_configured": True}
+
+
+def test_invalid_api_key_is_not_echoed():
+    response = client.put("/api/settings/api-key", json={"api_key": "too-short"})
+
+    assert response.status_code == 422
+    assert "too-short" not in response.text
 
 
 def test_unknown_video_is_not_found():

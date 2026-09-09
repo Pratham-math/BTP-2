@@ -7,10 +7,17 @@ export default function App() {
   const [job, setJob] = useState(null)
   const [recent, setRecent] = useState([])
   const [error, setError] = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [apiKey, setApiKey] = useState('')
+  const [apiKeyConfigured, setApiKeyConfigured] = useState(null)
+  const [showApiKey, setShowApiKey] = useState(false)
+  const [settingsMessage, setSettingsMessage] = useState('')
+  const [savingKey, setSavingKey] = useState(false)
   const busy = job && ['queued', 'running'].includes(job.state)
 
   useEffect(() => {
     loadRecent()
+    loadSettings()
   }, [])
 
   useEffect(() => {
@@ -19,12 +26,33 @@ export default function App() {
     return () => clearInterval(timer)
   }, [job?.id, job?.state])
 
+  useEffect(() => {
+    if (!settingsOpen) return
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') setSettingsOpen(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [settingsOpen])
+
   async function loadRecent() {
     try {
       const response = await fetch('/api/videos')
       if (response.ok) setRecent(await response.json())
     } catch {
       // The main action will show a useful server error if the backend is offline.
+    }
+  }
+
+  async function loadSettings() {
+    try {
+      const response = await fetch('/api/settings')
+      if (response.ok) {
+        const settings = await response.json()
+        setApiKeyConfigured(settings.api_key_configured)
+      }
+    } catch {
+      setApiKeyConfigured(null)
     }
   }
 
@@ -68,26 +96,55 @@ export default function App() {
     }
   }
 
+  async function saveApiKey(event) {
+    event.preventDefault()
+    setSavingKey(true)
+    setSettingsMessage('')
+    try {
+      const response = await fetch('/api/settings/api-key', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: apiKey }),
+      })
+      if (!response.ok) throw new Error(await readError(response))
+      setApiKeyConfigured(true)
+      setApiKey('')
+      setShowApiKey(false)
+      setSettingsMessage('Saved. New videos will use this key.')
+      setError('')
+    } catch (requestError) {
+      setSettingsMessage(requestError.message || 'Could not save the key.')
+    } finally {
+      setSavingKey(false)
+    }
+  }
+
+  function openSettings() {
+    setSettingsMessage('')
+    setSettingsOpen(true)
+  }
+
   return (
     <main>
-      <nav>
-        <a className="brand" href="/" aria-label="LearnFrame home">
-          <span className="brandMark">L</span>
-          <span>LearnFrame</span>
-        </a>
-        <span className="badge"><i /> Gemini + FFmpeg</span>
-      </nav>
+      <header className="topbar">
+        <button className="settingsButton" type="button" onClick={openSettings}>
+          <span className={`keyDot ${apiKeyConfigured ? 'configured' : ''}`} aria-hidden="true" />
+          Settings
+        </button>
+      </header>
 
       <section className="hero">
-        <p className="eyebrow">PROMPT → NARRATED VIDEO</p>
-        <h1>Turn an idea into a<br /><em>lesson you can watch.</em></h1>
-        <p className="intro">Describe what you want to learn. Gemini writes and narrates a three-slide lesson, then FFmpeg packages it as one video.</p>
+        <div>
+          <p className="sectionNote">Animated diagrams, narration, one video</p>
+          <h1>What do you want<br />to explain?</h1>
+        </div>
+        <p className="intro">Write a topic or question. Watch it explained with moving diagrams, illustrations and narration, then download the video.</p>
       </section>
 
       <section className="workspace">
-        <form onSubmit={createVideo}>
+        <form className="promptForm" onSubmit={createVideo}>
           <div className="fieldHead">
-            <label htmlFor="prompt">What should the lesson explain?</label>
+            <label htmlFor="prompt">Lesson prompt</label>
             <span>{prompt.length} / 2000</span>
           </div>
           <textarea
@@ -95,29 +152,34 @@ export default function App() {
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             maxLength="2000"
-            placeholder="Try: Explain gradient descent with a simple hill analogy..."
+            placeholder="For example: Explain gradient descent with a simple hill analogy."
             disabled={busy}
           />
           <div className="formFooter">
-            <button className="suggestion" type="button" onClick={() => setPrompt(samplePrompt)} disabled={busy}>
-              Use an example
+            <button className="textButton" type="button" onClick={() => setPrompt(samplePrompt)} disabled={busy}>
+              Fill in an example
             </button>
             <button className="primary" type="submit" disabled={busy || prompt.trim().length < 3}>
-              {busy ? 'Creating video…' : 'Generate lesson'} <span>→</span>
+              {busy ? 'Making video...' : 'Make video'}
             </button>
           </div>
         </form>
 
-        {error && <div className="notice error" role="alert">{error}</div>}
+        {error && (
+          <div className="notice error" role="alert">
+            <span>{error}</span>
+            {!apiKeyConfigured && <button type="button" onClick={openSettings}>Open settings</button>}
+          </div>
+        )}
 
         {job && (
           <article className="result">
             {busy && (
               <div className="status">
-                <div className="spinner" />
+                <div className="spinner" aria-hidden="true" />
                 <div>
                   <p className="statusTitle">{job.stage}</p>
-                  <p>Gemini calls can take a few minutes. You can leave this tab open.</p>
+                  <p>Writing, narration and animation can take a few minutes. You can leave this tab open.</p>
                 </div>
                 <strong>{Math.round(((job.current || 0) / (job.total || 3)) * 100)}%</strong>
               </div>
@@ -127,7 +189,7 @@ export default function App() {
               <div className="failed">
                 <p className="statusTitle">Generation stopped</p>
                 <p>{job.error}</p>
-                <button className="secondary" onClick={retry}>Retry</button>
+                <button className="secondary" onClick={retry}>Try again</button>
               </div>
             )}
 
@@ -135,10 +197,10 @@ export default function App() {
               <div className="ready">
                 <div className="readyHead">
                   <div>
-                    <p className="eyebrow">YOUR LESSON IS READY</p>
+                    <p className="sectionNote">Ready to watch</p>
                     <h2>{job.title || 'Generated lesson'}</h2>
                   </div>
-                  <a className="download" href={`/api/videos/${job.id}/download`}>Download MP4 ↓</a>
+                  <a className="download" href={`/api/videos/${job.id}/download`}>Download MP4</a>
                 </div>
                 <video
                   key={job.id}
@@ -148,7 +210,7 @@ export default function App() {
                   onLoadedMetadata={enableAudio}
                   onPlay={enableAudio}
                 />
-                <p className="audioNote">🔊 Narration included · If silent, right-click the Chrome tab and choose “Unmute site”.</p>
+                <p className="audioNote">Narration is included. If it is silent, check whether this browser tab is muted.</p>
               </div>
             )}
           </article>
@@ -157,10 +219,13 @@ export default function App() {
 
       {recent.length > 0 && !busy && (
         <section className="recent">
-          <p className="eyebrow">RECENT GENERATIONS</p>
+          <div className="recentHead">
+            <h2>Recent videos</h2>
+            <span>{recent.length}</span>
+          </div>
           <div className="recentList">
             {recent.map((item) => (
-              <button key={item.id} onClick={() => setJob(item)}>
+              <button type="button" key={item.id} onClick={() => setJob(item)}>
                 <span>{item.title || 'Untitled lesson'}</span>
                 <small>{item.state}</small>
               </button>
@@ -169,7 +234,64 @@ export default function App() {
         </section>
       )}
 
-      <footer>Local prototype · Your API key stays on the server</footer>
+      <footer>Runs locally. Saved API keys stay on the server.</footer>
+
+      {settingsOpen && (
+        <div className="modalBackdrop" onMouseDown={() => setSettingsOpen(false)}>
+          <section
+            className="settingsPanel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="settingsHead">
+              <div>
+                <p className="sectionNote">Server settings</p>
+                <h2 id="settings-title">Gemini API key</h2>
+              </div>
+              <button className="closeButton" type="button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">Close</button>
+            </div>
+
+            <p className="settingsCopy">The saved key is used for script writing and narration. It is stored in the server's local environment file and is never returned to the browser.</p>
+
+            <div className="settingStatus">
+              <span className={`keyDot ${apiKeyConfigured ? 'configured' : ''}`} aria-hidden="true" />
+              {apiKeyConfigured === null && 'Could not check the server'}
+              {apiKeyConfigured === true && 'An API key is saved'}
+              {apiKeyConfigured === false && 'No API key is saved'}
+            </div>
+
+            <form className="settingsForm" onSubmit={saveApiKey}>
+              <label htmlFor="api-key">{apiKeyConfigured ? 'Replace API key' : 'API key'}</label>
+              <div className="keyField">
+                <input
+                  id="api-key"
+                  type={showApiKey ? 'text' : 'password'}
+                  value={apiKey}
+                  onChange={(event) => setApiKey(event.target.value)}
+                  minLength="10"
+                  maxLength="512"
+                  autoComplete="off"
+                  spellCheck="false"
+                  placeholder="Paste a Gemini API key"
+                  autoFocus
+                />
+                <button type="button" onClick={() => setShowApiKey((visible) => !visible)}>
+                  {showApiKey ? 'Hide' : 'Show'}
+                </button>
+              </div>
+              {settingsMessage && <p className="settingsMessage" role="status">{settingsMessage}</p>}
+              <div className="settingsActions">
+                <button className="secondary" type="button" onClick={() => setSettingsOpen(false)}>Cancel</button>
+                <button className="primary" type="submit" disabled={savingKey || apiKey.trim().length < 10}>
+                  {savingKey ? 'Saving...' : 'Save key'}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </main>
   )
 }
