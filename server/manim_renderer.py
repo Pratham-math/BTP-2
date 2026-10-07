@@ -17,6 +17,7 @@ from manim import (
 )
 
 from server.visuals import RenderRequest, VisualSpec
+from server.config import PROFILES
 
 
 PAPER = "#F4F1E9"
@@ -148,8 +149,13 @@ class LessonAnimation(Scene):
         active_frames = max(len(steps), round(total_frames * .9))
         for index, animations in enumerate(steps):
             frames = active_frames // len(steps) + (index < active_frames % len(steps))
-            self.play(*animations, run_time=frames / config.frame_rate)
-        self.wait(max(1, total_frames - active_frames) / config.frame_rate)
+            # Manim samples np.arange(0, duration, frame_interval). Floating-point
+            # endpoints can add one frame per play. Stay just inside the endpoint
+            # while preserving at least one complete frame for tiny previews.
+            run_time = (frames - 1e-6) / config.frame_rate if frames > 1 else 1 / config.frame_rate
+            self.play(*animations, run_time=run_time)
+        hold_frames = max(1, total_frames - active_frames)
+        self.wait((hold_frames - 1e-6) / config.frame_rate if hold_frames > 1 else 1 / config.frame_rate)
 
     def diagram_steps(self):
         visual = self.request.visual
@@ -219,10 +225,11 @@ class LessonAnimation(Scene):
 def render(request: RenderRequest, output_path: Path):
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    width, height, fps = PROFILES[request.render_profile]
     with tempfile.TemporaryDirectory(prefix="manim-", dir=output_path.parent) as media_dir:
         with tempconfig({
-            "renderer": "cairo", "pixel_width": 1280, "pixel_height": 720,
-            "frame_rate": 24, "frame_width": 128 / 9, "frame_height": 8,
+            "renderer": "cairo", "pixel_width": width, "pixel_height": height,
+            "frame_rate": fps, "frame_width": 128 / 9, "frame_height": 8,
             "media_dir": media_dir, "video_dir": media_dir,
             "output_file": "animation", "format": "mp4",
             "write_to_movie": True, "save_last_frame": False,

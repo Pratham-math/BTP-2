@@ -1,18 +1,23 @@
 # Prompt-to-video MVP
 
 A deliberately small learning-video prototype. Enter a topic or explanation
-request; Gemini plans a three-scene lesson and narrates it, Manim animates the
-diagrams, and FFmpeg combines everything into one playable MP4.
+request, choose local Ollama/Piper generation or Gemini cloud APIs, and export
+one three-scene narrated MP4 through the existing Manim/FFmpeg renderer.
 
-This version does **not** include uploads, quizzes, checkpoints, accounts, or
-progress tracking.
+See [LOCAL_SETUP.md](LOCAL_SETUP.md) for local dependencies, mode/readiness
+checks, cancellation, retry behavior, operating limits and release acceptance
+checks. The app never switches a failed local job to a cloud provider.
+
+This version does **not** include uploads, quizzes, learner checkpoints, accounts,
+or learning-progress tracking.
 
 ## Requirements
 
 - Python 3.10+
 - Node.js 20+
 - `ffmpeg` and `ffprobe` on `PATH`, with H.264 and AAC support
-- A Gemini API key with access to the configured text and TTS models
+- A Gemini API key for Cloud API mode, or installed Ollama and Piper assets for
+  Local mode (see the setup guide)
 
 Manim is included in `requirements.txt`. The app uses its CPU renderer and plain
 text, so these templates do not require a GPU or LaTeX. For an existing checkout,
@@ -43,7 +48,7 @@ For a single-server demo:
 Set-Location client
 npm run build
 Set-Location ..
-.venv\Scripts\python -m uvicorn server.main:app --host 127.0.0.1 --port 8000 --workers 1
+.venv\Scripts\python -m uvicorn server.main:app --host 127.0.0.1 --port 8000 --workers 1 --no-proxy-headers
 ```
 
 Open <http://127.0.0.1:8000>.
@@ -63,31 +68,36 @@ Set-Location ..
 
 The automated media tests render all four Manim templates, check changing
 frames, timing, and the combined 720p H.264/AAC MP4. They use explicitly synthetic
-tones and do not call Gemini. A real end-to-end acceptance check requires a configured key, generation
-from the web UI, and listening to the resulting narration.
+tones and do not call Gemini or Ollama. Acceptance also requires fresh jobs with
+real narration, listening to their complete output, and inspecting playback.
+The local release additionally requires generation with no key and external
+networking disconnected after setup.
 
 ## How it works
 
-- `generate_script` asks Gemini for a validated three-scene JSON script with
-  a visual plan for every scene.
-- `generate_audio` asks Gemini TTS for each narration and writes valid WAV files.
+- Text providers return the same validated three-scene script. Gemini requests
+  a complete script; Ollama plans an outline and writes one bounded scene at a
+  time, with one repair for invalid content.
+- Speech providers use Gemini TTS or one supervised Piper voice process. Each
+  WAV is validated and measured before rendering.
 - `make_animated_scene` runs our fixed Manim templates in a separate local
   process, fitting each animation to the narration's duration. FFmpeg adds the
   audio; `combine_videos` joins normalized clips into `video.mp4`.
-- FastAPI runs one generation job in the background and exposes status, retry,
-  playback, and download endpoints.
+- FastAPI runs one generation job in the background and exposes readiness,
+  elapsed status, cancellation, resume, playback and download endpoints.
 
 The visual templates support processes, cycles, trees, and scatter plots with
 an optional least-squares fitted line. Nodes can include simple sun, plant,
-water, cloud, or computer illustrations. Gemini supplies labels, connections,
+water, cloud, or computer illustrations. The text provider supplies labels, connections,
 and numbers, never executable code. Graphs are validated before rendering.
 Animations follow the scene duration; they are not aligned to individual spoken
 words. This is a diagram renderer, not a general cinematic image/video model.
-Manim adds no API fee; the existing Gemini calls still have their model/project
-quotas. New videos use Manim automatically. Existing MP4s remain unchanged, and
+Local mode uses installed models and voices without inference API charges;
+Gemini calls have their model/project quotas. New videos use Manim automatically. Existing MP4s remain unchanged, and
 retries of older scripts without visual plans retain the Pillow slide renderer.
 
-Each result is saved under `data/<video-id>/`. Failed jobs retain valid completed
-files so Retry can reuse them. The app is a local presentation prototype: its
-background job is not a durable production queue, and Gemini TTS is a preview
-model whose access and quota depend on the API project.
+Each result is saved under `data/<video-id>/`. A single bounded executor owns
+generation, with atomic manifests and verified artifact hashes for retries.
+Restarted jobs become interrupted and can be resumed. This remains a local
+presentation prototype rather than a durable production queue. Gemini TTS is a
+preview model whose access and quota depend on the API project.

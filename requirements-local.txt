@@ -1,0 +1,4 @@
+# Optional local narration; cloud generation does not require Piper.
+-r requirements.txt
+piper-tts==1.4.2
+onnxruntime==1.23.2

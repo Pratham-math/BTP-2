@@ -96,3 +96,4 @@ class RenderRequest(VisualModel):
     duration: float = Field(ge=0.5, le=300)
     scene_number: int = Field(ge=1, le=3)
     total: int = Field(ge=1, le=3)
+    render_profile: Literal["720p24", "480p24"] = "720p24"

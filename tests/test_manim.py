@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from scripts.check_media import inspect as inspect_media
 from server import generator
 from server.storage import Storage
+from server.providers.base import inspect_audio
 from server.visuals import VisualSpec
 
 
@@ -91,8 +92,8 @@ def test_templates_render_moving_video_with_audio(kind, rendered_examples):
 
 def test_animated_clips_join_into_one_playable_mp4(rendered_examples, tmp_path):
     clips = []
-    for kind in ("process", "tree", "plot"):
-        copy = tmp_path / f"{kind}.mp4"
+    for index, kind in enumerate(("process", "tree", "plot"), 1):
+        copy = tmp_path / f"scene-{index}.mp4"
         shutil.copyfile(rendered_examples[kind], copy)
         clips.append(copy)
     final = tmp_path / "video.mp4"
@@ -151,16 +152,20 @@ def test_retry_reuses_narration_and_completed_animations(rendered_examples, tmp_
         calls["audio"] += 1
         write_tone(path)
 
-    def animation_result(_scene, _audio, output, index, _total):
+    def animation_result(_scene, _duration, output, index, _total, _profile):
         calls["animation"] += 1
         if calls["animation"] == 2:
             raise RuntimeError("Temporary rendering failure")
         shutil.copyfile(rendered_examples["process"], output)
 
-    monkeypatch.setattr(generator, "create_client", lambda _: None)
-    monkeypatch.setattr(generator, "generate_script", script_result)
-    monkeypatch.setattr(generator, "generate_audio", audio_result)
-    monkeypatch.setattr(generator, "make_animated_scene", animation_result)
+    text = SimpleNamespace(identity={"provider": "fixture-text"}, generate_script=script_result, close=lambda: None)
+    def speech_result(narration, path):
+        audio_result(None, narration, path)
+        return inspect_audio(path)
+    speech = SimpleNamespace(identity={"provider": "fixture-tone"}, synthesize=speech_result, close=lambda: None)
+    monkeypatch.setattr(generator, "create_providers", lambda *_: (text, speech))
+    monkeypatch.setattr(generator, "check_settings", lambda config, *_args, **_kwargs: {"ready": True, "checks": [], "settings": config.model_dump()})
+    monkeypatch.setattr(generator, "render_animation", animation_result)
     args = (storage, job_id, "Explain sunlight", "offline-key", "fake", "fake", "fake")
     generator.run_generation(*args)
     assert storage.read_status(job_id)["state"] == "failed"

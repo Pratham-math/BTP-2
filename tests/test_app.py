@@ -11,7 +11,7 @@ from server.generator import Scene, combine_videos, draw_slide, make_scene_video
 from server.main import app
 
 
-client = TestClient(app)
+client = TestClient(app, client=("127.0.0.1", 50000), headers={"X-App-Token": main.CONTROL_TOKEN})
 
 
 def test_blank_and_too_long_prompts_are_rejected():
@@ -23,7 +23,7 @@ def test_missing_key_has_a_clear_error(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     response = client.post("/api/videos", json={"prompt": "Explain photosynthesis"})
     assert response.status_code == 503
-    assert "Settings" in response.json()["detail"]
+    assert "Settings" in response.json()["detail"]["message"]
 
 
 def test_api_key_can_be_saved_without_being_returned(tmp_path: Path, monkeypatch):
@@ -39,7 +39,7 @@ def test_api_key_can_be_saved_without_being_returned(tmp_path: Path, monkeypatch
     assert response.json() == {"api_key_configured": True}
     assert api_key not in response.text
     assert api_key in env_file.read_text(encoding="utf-8")
-    assert client.get("/api/settings").json() == {"api_key_configured": True}
+    assert client.get("/api/settings").json()["api_key_configured"] is True
 
 
 def test_invalid_api_key_is_not_echoed():

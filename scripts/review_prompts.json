@@ -1,0 +1,14 @@
+[
+  {"id":"photosynthesis","expected_visual":"process","prompt":"Explain photosynthesis for a high-school beginner. Use a process diagram connecting sunlight, plant leaves, and stored chemical energy."},
+  {"id":"water-cycle","expected_visual":"cycle","prompt":"Explain evaporation, condensation, and precipitation as a repeating water cycle. Show a closed cycle diagram."},
+  {"id":"binary-search-tree","expected_visual":"tree","prompt":"Explain a binary search tree using the numeric keys 10, 5, and 15. Show a correct tree example, with smaller keys on the left."},
+  {"id":"linear-trend","expected_visual":"plot","prompt":"Explain a linear trend using illustrative study-hour and practice-score data. Show a scatter plot and a fitted line calculated from the points."},
+  {"id":"network-packet","expected_visual":"process","prompt":"Explain how a network packet travels from a laptop through a router to a server. Use a simple process diagram."},
+  {"id":"software-feedback","expected_visual":"cycle","prompt":"Explain iterative software development as a repeating plan, build, test, and improve cycle. Show a closed cycle."},
+  {"id":"classification-tree","expected_visual":"tree","prompt":"Explain a simple classification tree that splits animals into mammals and birds, then gives one example of each. Use a tree diagram."},
+  {"id":"temperature-data","expected_visual":"plot","prompt":"Explain scatter plots using these illustrative data pairs: time in minutes and temperature in degrees Celsius: (1,20), (2,25), (3,28), (4,32). Show labeled units."},
+  {"id":"long-labels","expected_visual":"process","prompt":"Explain converting a complex research question into a measurable experiment, using short readable labels for a process diagram. The original concept names include Operationalizing Abstract Scientific Variables and Interpreting Reproducible Experimental Evidence."},
+  {"id":"missing-context","expected_outcome":"clarify-or-limit","prompt":"Explain the diagram from the presentation I mentioned yesterday. You have not been given that presentation."},
+  {"id":"constant-x","expected_outcome":"reject-fit-or-simplify","prompt":"Explain fitting a regression line to illustrative points (2,1), (2,3), and (2,5). Discuss the constant x-value limitation and do not invent a valid slope."},
+  {"id":"unsupported-cinematic","expected_outcome":"explain-template-limit","prompt":"Create a photorealistic cinematic movie with actors and camera movements explaining medieval castle life. Do not use diagram templates."}
+]
