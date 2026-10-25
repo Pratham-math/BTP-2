@@ -1,13 +1,28 @@
 # Project working instructions
 
-Build the small prompt-to-video MVP only. The current scope is one text prompt,
-Gemini-written visual plans and narration, Gemini speech, local Manim animations,
-Pillow slides for older saved jobs, FFmpeg rendering, and one playable/downloadable MP4. Do not add quizzes, accounts,
-uploads, a database, or a worker framework yet.
+Implement `BTP2_Complete_Platform_Implementation_Plan (1).md`. The user confirmed
+on 22 October 2026 that it supersedes the old MVP-only restrictions. Keep React,
+FastAPI, provider adapters and the safe Manim/FFmpeg renderer. Add authenticated
+independent study and classrooms, source ingestion, versioned curricula,
+checkpoints, isolated Python grading, durable jobs and persistent progress.
+
+Keep answer keys, runner tokens, storage credentials and provider keys on the
+server. Learner code must run only on a separately isolated runner. Private
+independent work is never visible to course teachers. Classroom publication
+requires review of the exact immutable lesson version and all reachable assets.
+Never label development fixtures as generated or human-reviewed release content.
+Missing infrastructure must produce actionable readiness errors, not fake success.
 
 Keep the React interface and FastAPI implementation small and explainable.
 Never put the Gemini key in frontend code or logs. A synthetic test tone may
 verify rendering in offline tests, but it is not evidence of live narration.
 
-Core checks are `.venv\Scripts\python -m pytest -q` and `npm run build` from
-the `client` directory.
+Core checks are `.venv\Scripts\python -m pytest -q`, plus `npm test` and
+`npm run build` from the `client` directory. `scripts/checks.ps1` runs all three.
+
+Read `PROJECT_CONTEXT.md`, `IMPLEMENTATION_PROGRESS.md` and `PLATFORM_STATUS.md`
+for current decisions, progress and acceptance gaps. `LEGACY_MVP_PROGRESS.md`
+contains historical evidence, not current scope or installed-runtime status.
+Ollama text/verification and Piper narration are implemented alternatives to
+Gemini. Do not require a Gemini key for that path or silently change the host's
+provider settings. Image/YouTube extraction currently uses the Gemini adapter.

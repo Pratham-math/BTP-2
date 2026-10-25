@@ -1,0 +1,9 @@
+-r requirements.txt
+SQLAlchemy==2.0.55
+psycopg[binary]>=3.2,<4
+PyJWT[crypto]>=2.10,<3
+boto3>=1.40,<2
+python-multipart>=0.0.20,<0.1
+pypdf>=6,<7
+python-pptx>=1.0,<2
+pypdfium2==5.14.0

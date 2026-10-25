@@ -1,8 +1,8 @@
 """Bounded scene data shared by Gemini validation and the local Manim renderer."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 
 class VisualModel(BaseModel):
@@ -26,8 +26,25 @@ class PlotPoint(VisualModel):
     y: float = Field(ge=-1000, le=1000)
 
 
+class TraceStep(VisualModel):
+    line: int = Field(ge=1, le=12, description="The Python line just executed; variables describe its resulting state")
+    variables: dict[str, str] = Field(default_factory=dict, max_length=6)
+    array: list[str] = Field(default_factory=list, max_length=10)
+    active_index: int | None = Field(default=None, ge=0, le=9)
+    array_name: str = Field(default="", max_length=16)
+    index_variable: str = Field(default="", max_length=16)
+
+    @model_validator(mode="after")
+    def bounded_state(self):
+        if any(len(k) > 16 or len(v) > 36 for k, v in self.variables.items()) or any(len(x) > 12 for x in self.array):
+            raise ValueError("Trace state labels exceed readable display bounds")
+        if self.active_index is not None and self.active_index >= len(self.array):
+            raise ValueError("Highlighted array index must exist")
+        return self
+
+
 class VisualSpec(VisualModel):
-    kind: Literal["process", "cycle", "tree", "plot"]
+    kind: Literal["process", "cycle", "tree", "plot", "code_trace"]
     caption: str = Field(min_length=1, max_length=110)
     nodes: list[VisualNode] = Field(default_factory=list, max_length=7)
     edges: list[VisualEdge] = Field(default_factory=list, max_length=8)
@@ -35,9 +52,21 @@ class VisualSpec(VisualModel):
     x_label: str = Field(default="", max_length=24)
     y_label: str = Field(default="", max_length=24)
     fit_line: bool = False
+    code_lines: list[Annotated[str, StringConstraints(strip_whitespace=False)]] = Field(default_factory=list, max_length=12)
+    trace: list[TraceStep] = Field(default_factory=list, max_length=30)
 
     @model_validator(mode="after")
     def check_diagram(self):
+        if self.kind == "code_trace":
+            if not self.code_lines or not self.trace or any(len(line) > 60 for line in self.code_lines):
+                raise ValueError("Code traces require up to 12 short code lines and measured trace states")
+            if self.nodes or self.edges or self.points or self.fit_line:
+                raise ValueError("Code traces use code lines and state, not graph or plot fields")
+            if any(step.line > len(self.code_lines) for step in self.trace):
+                raise ValueError("Trace highlights must reference existing code lines")
+            return self
+        if self.code_lines or self.trace:
+            raise ValueError("Only code_trace visuals use code and state fields")
         if self.kind == "plot":
             if len(self.points) < 2 or not self.x_label or not self.y_label:
                 raise ValueError("Plots need at least two points and both axis labels")
@@ -94,6 +123,27 @@ class RenderRequest(VisualModel):
     title: str = Field(min_length=3, max_length=60)
     visual: VisualSpec
     duration: float = Field(ge=0.5, le=300)
-    scene_number: int = Field(ge=1, le=3)
-    total: int = Field(ge=1, le=3)
+    scene_number: int = Field(ge=1)
+    total: int = Field(ge=1)
     render_profile: Literal["720p24", "480p24"] = "720p24"
+    cue_times: list[float] = Field(default_factory=list, max_length=120)
+    cue_steps: list[int] = Field(default_factory=list, max_length=120)
+
+    @model_validator(mode="after")
+    def check_timeline(self):
+        if self.scene_number > self.total:
+            raise ValueError("Scene number must not exceed total")
+        if self.cue_times and (self.cue_times != sorted(self.cue_times) or self.cue_times[0] < 0 or self.cue_times[-1] >= self.duration):
+            raise ValueError("Cue times must be sorted and inside the scene duration")
+        if self.cue_steps and (len(self.cue_steps) != len(self.cue_times) or self.cue_steps[0] != 0 or self.cue_steps != sorted(self.cue_steps)
+                               or self.cue_steps[-1] >= visual_step_count(self.visual)):
+            raise ValueError("Cue steps must start at zero, follow template order, and match the measured cues")
+        return self
+
+
+def visual_step_count(visual: VisualSpec):
+    if visual.kind == "code_trace":
+        return 1 + len(visual.trace)
+    if visual.kind == "plot":
+        return 1 + 2 * len(visual.points) + int(visual.fit_line)
+    return len(visual.nodes) + 2 * len(visual.edges)

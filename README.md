@@ -1,103 +1,88 @@
-# Prompt-to-video MVP
+# BTP2 Learning Studio
 
-A deliberately small learning-video prototype. Enter a topic or explanation
-request, choose local Ollama/Piper generation or Gemini cloud APIs, and export
-one three-scene narrated MP4 through the existing Manim/FFmpeg renderer.
+React/FastAPI teaching platform for private independent study and teacher-reviewed
+classrooms. The governing specification is
+[BTP2_Complete_Platform_Implementation_Plan (1).md](<BTP2_Complete_Platform_Implementation_Plan (1).md>).
+The user approved this expanded scope on 22 October 2026.
 
-See [LOCAL_SETUP.md](LOCAL_SETUP.md) for local dependencies, mode/readiness
-checks, cancellation, retry behavior, operating limits and release acceptance
-checks. The app never switches a failed local job to a cloud provider.
+The platform implementation is **not a completed or deployed release**.
+Supabase PostgreSQL is provisioned and its restricted backend connection is
+verified. Multi-account acceptance, storage, model/voice evaluation, isolated execution,
+human lesson review and production acceptance remain open. See
+[PLATFORM_STATUS.md](PLATFORM_STATUS.md) for the evidence and remaining work.
 
-This version does **not** include uploads, quizzes, learner checkpoints, accounts,
-or learning-progress tracking.
+Google login works and the user-selected initial administrator is configured.
+Remaining services are guided in [SERVICE_SETUP.md](SERVICE_SETUP.md); no free
+isolated runner host is currently available.
 
-## Requirements
+Lesson generation/verification can use **Ollama**, with **Piper** narration;
+Gemini is optional for that text-based path. Local provider support is
+implemented, but this environment still needs its runtime/model/voice setup and
+quality evaluation. Current image/YouTube extraction uses Gemini. Storage and
+isolated Python grading are separate requirements for either AI route.
 
-- Python 3.10+
-- Node.js 20+
-- `ffmpeg` and `ffprobe` on `PATH`, with H.264 and AAC support
-- A Gemini API key for Cloud API mode, or installed Ollama and Piper assets for
-  Local mode (see the setup guide)
+## Start here
 
-Manim is included in `requirements.txt`. The app uses its CPU renderer and plain
-text, so these templates do not require a GPU or LaTeX. For an existing checkout,
-rerun `.venv\Scripts\python -m pip install -r requirements.txt` and restart FastAPI.
-Other operating systems may need Cairo/Pango build dependencies; see the
-[Manim installation guide](https://docs.manim.community/en/stable/installation/uv.html).
+1. Read [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) and
+   [IMPLEMENTATION_PROGRESS.md](IMPLEMENTATION_PROGRESS.md) for the current
+   handoff. Follow [PLATFORM_SETUP.md](PLATFORM_SETUP.md) for services, dependencies and
+   the three local processes.
+2. Keep secrets in the ignored local `.env`; never copy it into a frontend or
+   image. Do not replace the existing configured `.env` with the example.
+3. Build the client and run `scripts/start-platform.ps1`. Open
+   [the local app](http://127.0.0.1:8000).
+4. Use [OPERATIONS.md](OPERATIONS.md) for worker recovery, private storage,
+   encrypted application backups and the release checklist.
 
-## Windows PowerShell setup
+## Implemented paths
+
+- Supabase signed identity and live-session verification, trusted database roles,
+  course enrollment/revocation and server-enforced tenant boundaries.
+- Versioned source previews/corrections, complete objective DAGs and assessment
+  contracts, bounded author/verifier/repair stages.
+- Incremental independently playable blocks, semantic narration cues, captions
+  and five fixed Manim visuals, including a runner-verified Python trace.
+- Durable PostgreSQL jobs with scoped deduplication, leases, fencing, admission
+  limits and a separate grading queue.
+- Idempotent assessments, hints/recaps/equivalent checks, explicit assisted and
+  unresolved outcomes, revision-checked progress and account-synced code drafts.
+- Exact-version classroom review, immutable approval, publication, assignments,
+  draft forks/edits and private-versus-classroom reporting.
+
+Unverified source adapters are disabled by default. A feature flag or passing
+fixture does not establish that an input or a generated lesson meets release
+acceptance.
+
+## Development checks
+
+Use CPython 3.12 and Node.js 22. The worker also needs FFmpeg/ffprobe and Manim's
+native dependencies. From PowerShell:
 
 ```powershell
-python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
-Copy-Item .env.example .env
-Set-Location client
-npm install
-Set-Location ..
+.\scripts\checks.ps1
 ```
 
-You can add or replace the Gemini API key from Settings in the web interface.
-FastAPI saves it to `.env`, and the saved value is never returned to the browser.
-Model names and voice can still be changed directly in `.env`.
+This runs the Python suite, frontend auth-screen regression tests and production
+client build. The current baseline is **142 backend and 15 frontend tests**;
+see [PLATFORM_STATUS.md](PLATFORM_STATUS.md) for the latest verification.
+The media tests use synthetic tones, not real narration. SQLite and injected
+identities are test fixtures only; production uses PostgreSQL and Supabase Auth.
+The checked-in migration scripts require operator execution, not the API login.
 
-## Run
+## Repository map
 
-For a single-server demo:
+| Area | Responsibility |
+| --- | --- |
+| `server/platform.py`, `platform_api.py`, `auth/` | Authenticated API and resource permissions |
+| `server/lessons/`, `ingestion/` | Evidence, contracts, authoring, safe extraction, production and edits |
+| `server/learning/`, `assessment/` | Sessions, routing, grading and external runner |
+| `server/worker/` | Durable generation and grading dispatch |
+| `client/src/platform/`, `pages/`, `player/` | Accounts, independent/classroom UI and playback |
+| `migrations/`, `deploy/`, `scripts/`, `tests/` | Schema, host packaging, checks and operations |
 
-```powershell
-Set-Location client
-npm run build
-Set-Location ..
-.venv\Scripts\python -m uvicorn server.main:app --host 127.0.0.1 --port 8000 --workers 1 --no-proxy-headers
-```
-
-Open <http://127.0.0.1:8000>.
-
-For development, run the backend command above and `npm run dev` from `client`
-in another terminal, then open the Vite URL. Vite proxies `/api` to port 8000.
-
-## Checks
-
-```powershell
-.venv\Scripts\python -m pytest -q
-Set-Location client
-npm run build
-Set-Location ..
-.venv\Scripts\python scripts/check_media.py data\<video-id>\video.mp4
-```
-
-The automated media tests render all four Manim templates, check changing
-frames, timing, and the combined 720p H.264/AAC MP4. They use explicitly synthetic
-tones and do not call Gemini or Ollama. Acceptance also requires fresh jobs with
-real narration, listening to their complete output, and inspecting playback.
-The local release additionally requires generation with no key and external
-networking disconnected after setup.
-
-## How it works
-
-- Text providers return the same validated three-scene script. Gemini requests
-  a complete script; Ollama plans an outline and writes one bounded scene at a
-  time, with one repair for invalid content.
-- Speech providers use Gemini TTS or one supervised Piper voice process. Each
-  WAV is validated and measured before rendering.
-- `make_animated_scene` runs our fixed Manim templates in a separate local
-  process, fitting each animation to the narration's duration. FFmpeg adds the
-  audio; `combine_videos` joins normalized clips into `video.mp4`.
-- FastAPI runs one generation job in the background and exposes readiness,
-  elapsed status, cancellation, resume, playback and download endpoints.
-
-The visual templates support processes, cycles, trees, and scatter plots with
-an optional least-squares fitted line. Nodes can include simple sun, plant,
-water, cloud, or computer illustrations. The text provider supplies labels, connections,
-and numbers, never executable code. Graphs are validated before rendering.
-Animations follow the scene duration; they are not aligned to individual spoken
-words. This is a diagram renderer, not a general cinematic image/video model.
-Local mode uses installed models and voices without inference API charges;
-Gemini calls have their model/project quotas. New videos use Manim automatically. Existing MP4s remain unchanged, and
-retries of older scripts without visual plans retain the Pillow slide renderer.
-
-Each result is saved under `data/<video-id>/`. A single bounded executor owns
-generation, with atomic manifests and verified artifact hashes for retries.
-Restarted jobs become interrupted and can be resumed. This remains a local
-presentation prototype rather than a durable production queue. Gemini TTS is a
-preview model whose access and quota depend on the API project.
+The original single-owner video MVP remains in `server/main.py` and
+`client/src/LegacyVideoApp.jsx`, with historical instructions in
+[LEGACY_MVP.md](LEGACY_MVP.md) and [LOCAL_SETUP.md](LOCAL_SETUP.md).
+Historical progress and local-model demonstrations are preserved in
+[LEGACY_MVP_PROGRESS.md](LEGACY_MVP_PROGRESS.md).
+It is not mounted by the platform and must not be exposed as a multi-user API.

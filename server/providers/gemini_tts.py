@@ -15,12 +15,13 @@ def generate_audio(
     output_path: Path,
     model: str,
     voice: str,
+    *, metadata_style=False, admit=None,
 ) -> None:
     speech_prompt = (
         "Speak in a warm, clear, patient teaching voice at a moderate pace. "
         "Read only the following narration:\n\n" + narration
     )
-    interaction = call_tts_with_retry(client, model, speech_prompt, voice)
+    interaction = call_tts_with_retry(client, model, narration if metadata_style else speech_prompt, voice, metadata_style=metadata_style, admit=admit)
     audio = interaction.output_audio
     if audio is None or not audio.data:
         raise RuntimeError("Gemini returned no speech audio")
@@ -40,12 +41,14 @@ def generate_audio(
     os.replace(temp_path, output_path)
 
 
-def call_tts_with_retry(client: genai.Client, model: str, prompt: str, voice: str):
+def call_tts_with_retry(client: genai.Client, model: str, prompt: str, voice: str, *, metadata_style=False, admit=None):
     for attempt in range(2):
         try:
+            if admit: admit()
             return client.interactions.create(
                 model=model,
-                input=prompt,
+                input=[{"type": "user_input", "content": [{"type": "text", "text": prompt,
+                    "annotations": [{"type": "speech_metadata", "style": "Warm, patient teaching; clear diction at a moderate pace."}]}]}] if metadata_style else prompt,
                 response_format={"type": "audio"},
                 generation_config={"speech_config": [{"voice": voice}]},
             )
@@ -83,14 +86,15 @@ def decode_audio_bytes(value: str | bytes) -> bytes:
 
 
 class GeminiSpeechProvider:
-    def __init__(self, client, model, voice):
+    def __init__(self, client, model, voice, *, metadata_style=False, admit=None):
         self.client, self.model, self.voice = client, model, voice
-        self.identity = {"provider": "gemini", "model": model, "voice": voice}
+        self.metadata_style, self.admit = metadata_style, admit
+        self.identity = {"provider": "gemini", "model": model, "voice": voice, "protocol": "metadata-v1" if metadata_style else "legacy-instructions-v1"}
 
     def synthesize(self, text, output_path):
         from server.runtime import checkpoint
         checkpoint()
-        generate_audio(self.client, text, output_path, self.model, self.voice)
+        generate_audio(self.client, text, output_path, self.model, self.voice, metadata_style=self.metadata_style, admit=self.admit)
         checkpoint()
         return inspect_audio(output_path, self.identity)
 

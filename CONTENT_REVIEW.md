@@ -1,5 +1,8 @@
 # Content review
 
+> Historical MVP-only evidence. This does not approve any complete-platform
+> curriculum, assessment, narration or classroom version. See PLATFORM_STATUS.md.
+
 Reviewed saved text and visual specifications on 7 October 2026. This is an
 agent review of generated scripts, separate from the user's playback/listening
 confirmation. No assessments or answer keys are part of this MVP.

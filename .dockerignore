@@ -1,0 +1,12 @@
+.env
+**/.env
+**/.env.*
+.venv
+.local
+.run
+data
+__pycache__
+**/__pycache__
+.pytest_cache
+client/node_modules
+.git

@@ -1,5 +1,11 @@
 # Local and cloud video generation
 
+This guide contains runtime installation and **historical single-owner MVP**
+instructions. For the current authenticated app, use
+[SERVICE_SETUP.md](SERVICE_SETUP.md) and [PLATFORM_SETUP.md](PLATFORM_SETUP.md).
+The three-scene limits and Settings/preset UI below do not define platform scope.
+Gemini is optional for Ollama/Piper text-based platform lessons.
+
 The app supports two complete presets. **Local** uses Ollama text and Piper
 speech; **Cloud API** uses Gemini for both. Manim and FFmpeg always run on the
 computer hosting FastAPI. A WiFi visitor uses that host's hardware.
@@ -53,11 +59,13 @@ tree up to 7 nodes and 4 levels, plot up to 12 points, narration 35–110 words.
 
 ## Start and check
 
-This checkout now has a verified Ollama v0.35.1 portable runtime and the
-`qwen3:4b-q4_K_M` model under `%LOCALAPPDATA%/PromptToVideo/`, outside OneDrive.
-Piper and `en_US-lessac-medium` are installed in the project environment/voice
-directory. The dedicated Ollama service was started on `127.0.0.1:11434` with
-`OLLAMA_NO_CLOUD=1`. Installation is separate from the release acceptance gates.
+The October MVP demonstrations used a portable Ollama runtime and Qwen3 model,
+plus real Piper speech. Those historical results are preserved in
+[LEGACY_MVP_PROGRESS.md](LEGACY_MVP_PROGRESS.md). They do not describe the current
+installation: on 25 October the configured Ollama endpoint was unreachable and
+the current environment had no Piper package or valid voice files. Verify the
+runtime/model/voice before following the launch instructions. Installation is
+separate from the release acceptance gates.
 
 To start this dedicated runtime again after stopping it, use another terminal:
 

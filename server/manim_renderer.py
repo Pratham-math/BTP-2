@@ -142,7 +142,38 @@ class LessonAnimation(Scene):
                  Line([-6.3, 2.65, 0], [6.3, 2.65, 0], color=MUTED, stroke_width=1),
                  Line([-6.3, -2.65, 0], [6.3, -2.65, 0], color=MUTED, stroke_width=1))
 
-        steps = self.plot_steps() if request.visual.kind == "plot" else self.diagram_steps()
+        steps = self.code_steps() if request.visual.kind == "code_trace" else self.plot_steps() if request.visual.kind == "plot" else self.diagram_steps()
+        if request.cue_times:
+            # Each cue starts at a measured semantic utterance boundary. A cue
+            # can reveal several template steps together without invented timing.
+            cues = request.cue_times
+            elapsed_frames = 0
+            for index, start in enumerate(cues):
+                start_frame = round(start * config.frame_rate)
+                if start_frame > elapsed_frames:
+                    self.wait((start_frame - elapsed_frames - 1e-6) / config.frame_rate)
+                stop = cues[index + 1] if index + 1 < len(cues) else request.duration
+                left = request.cue_steps[index] if request.cue_steps else index * len(steps) // len(cues)
+                right = request.cue_steps[index + 1] if request.cue_steps and index + 1 < len(cues) else len(steps) if request.cue_steps else (index + 1) * len(steps) // len(cues)
+                chosen = steps[left:right]
+                stop_frame = round(stop * config.frame_rate)
+                frame_budget = stop_frame - start_frame
+                if chosen:
+                    if frame_budget < len(chosen):
+                        raise ValueError("The measured utterance is too short for its visual events")
+                    for number, animations in enumerate(chosen):
+                        frames = frame_budget // len(chosen) + int(number < frame_budget % len(chosen))
+                        # Reveal promptly at the semantic boundary, then hold a
+                        # readable stable state. Long narration must not turn a
+                        # state change into a multi-second overlapping crossfade.
+                        reveal = min(frames, max(1, round(.45 * config.frame_rate)))
+                        self.play(*animations, run_time=(reveal - 1e-6) / config.frame_rate if reveal > 1 else 1 / config.frame_rate)
+                        if frames > reveal:
+                            self.wait((frames - reveal - 1e-6) / config.frame_rate)
+                else:
+                    self.wait((frame_budget - 1e-6) / config.frame_rate if frame_budget > 1 else 1 / config.frame_rate)
+                elapsed_frames = stop_frame
+            return
         # Every action gets a share of the actual WAV duration. Reserving a
         # final hold keeps the completed diagram visible and absorbs rounding.
         total_frames = max(len(steps) + 1, round(request.duration * config.frame_rate))
@@ -156,6 +187,34 @@ class LessonAnimation(Scene):
             self.play(*animations, run_time=run_time)
         hold_frames = max(1, total_frames - active_frames)
         self.wait((hold_frames - 1e-6) / config.frame_rate if hold_frames > 1 else 1 / config.frame_rate)
+
+    def code_steps(self):
+        visual = self.request.visual
+        import os
+        lines = [Text(f"{i:2}  {line}", font="Consolas" if os.name == "nt" else "DejaVu Sans Mono", font_size=22,
+                      color=INK, disable_ligatures=True) for i, line in enumerate(visual.code_lines, 1)]
+        scale = min(1, 7.0 / max(x.width for x in lines))
+        code = VGroup(*[line.scale(scale).move_to([-6, 2.1 - i * .35, 0], aligned_edge=[-1, 0, 0]) for i, line in enumerate(lines)])
+        steps = [[FadeIn(code)]]
+        previous = None
+        for state in visual.trace:
+            selected = code[state.line - 1]
+            highlight = Rectangle(width=7.2, height=.34, color=COLORS["amber"], fill_opacity=.1).move_to([-2.4, selected.get_center()[1], 0])
+            variables = VGroup(*[label(f"{name} = {value}", 4.1, .35, size=24).move_to([4.0, 1.8 - i * .5, 0])
+                                for i, (name, value) in enumerate(state.variables.items())])
+            cells = VGroup()
+            for i, value in enumerate(state.array):
+                box = Rectangle(width=.7, height=.5, color=COLORS["amber"] if i == state.active_index else COLORS["blue"])
+                item = VGroup(box, label(value, .6, .35, size=20).move_to(box)).move_to([-5 + i * .8, -2.1, 0])
+                cells.add(item)
+            current = VGroup(highlight, variables, cells)
+            animations = [FadeIn(current)]
+            if previous is not None:
+                from manim import FadeOut
+                animations.append(FadeOut(previous))
+            steps.append(animations)
+            previous = current
+        return steps
 
     def diagram_steps(self):
         visual = self.request.visual

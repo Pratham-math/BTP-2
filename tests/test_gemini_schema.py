@@ -58,7 +58,7 @@ def test_outgoing_schema_is_supported_and_replies_stay_strict(case):
         scene = schema["$defs"][scenes["items"]["$ref"].rsplit("/", 1)[1]]
         assert "visual" in scene["required"]
         visual = schema["$defs"][scene["properties"]["visual"]["$ref"].rsplit("/", 1)[1]]
-        assert visual["properties"]["kind"]["enum"] == ["process", "cycle", "tree", "plot"]
+        assert visual["properties"]["kind"]["enum"] == ["process", "cycle", "tree", "plot", "code_trace"]
         reply = lesson_reply(extra_field=case == "extra-field")
         if case == "wrong-count":
             reply["scenes"] = reply["scenes"][:2]

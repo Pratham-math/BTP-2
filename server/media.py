@@ -101,15 +101,15 @@ def make_scene_video(image_path: Path, audio_path: Path, output_path: Path,
 
 
 def render_animation(scene: Scene, duration: float, output_path: Path, scene_number: int,
-                     total: int, profile: str = "720p24"):
+                     total: int, profile: str = "720p24", *, cue_times: list[float] | None = None, cue_steps: list[int] | None = None):
     if scene.visual is None:
         raise ValueError("An animated scene needs a visual plan")
     request = RenderRequest(title=scene.title, visual=scene.visual, duration=duration,
-                            scene_number=scene_number, total=total, render_profile=profile)
+                            scene_number=scene_number, total=total, render_profile=profile, cue_times=cue_times or [], cue_steps=cue_steps or [])
     plan_path = output_path.with_suffix(".json")
     atomic_json(plan_path, request.model_dump())
     render_env = {key: value for key, value in os.environ.items()
-                  if key.upper() not in {"GEMINI_API_KEY", "GOOGLE_API_KEY"}}
+                  if not any(secret in key.upper() for secret in ("KEY", "TOKEN", "SECRET", "PASSWORD", "DATABASE_URL"))}
     render_env.update(PYTHONIOENCODING="utf-8", OMP_NUM_THREADS="2")
     temporary = output_path.with_suffix(".tmp.mp4")
     try:
