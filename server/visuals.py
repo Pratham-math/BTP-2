@@ -43,8 +43,16 @@ class TraceStep(VisualModel):
         return self
 
 
+class ArrayPointer(VisualModel):
+    index: int = Field(ge=0, le=9)
+    note: str = Field(default="", max_length=60)
+
+
+TEXT_KINDS = {"bullets", "equation"}
+
+
 class VisualSpec(VisualModel):
-    kind: Literal["process", "cycle", "tree", "plot", "code_trace"]
+    kind: Literal["process", "cycle", "tree", "plot", "code_trace", "bullets", "compare", "array", "equation"]
     caption: str = Field(min_length=1, max_length=110)
     nodes: list[VisualNode] = Field(default_factory=list, max_length=7)
     edges: list[VisualEdge] = Field(default_factory=list, max_length=8)
@@ -54,9 +62,35 @@ class VisualSpec(VisualModel):
     fit_line: bool = False
     code_lines: list[Annotated[str, StringConstraints(strip_whitespace=False)]] = Field(default_factory=list, max_length=12)
     trace: list[TraceStep] = Field(default_factory=list, max_length=30)
+    items: list[Annotated[str, StringConstraints(max_length=120)]] = Field(default_factory=list, max_length=8,
+        description="bullets: points revealed one by one; equation: LaTeX lines; array: cell values")
+    headers: list[Annotated[str, StringConstraints(max_length=32)]] = Field(default_factory=list, max_length=3,
+        description="compare: 2 or 3 column headings")
+    rows: list[list[Annotated[str, StringConstraints(max_length=60)]]] = Field(default_factory=list, max_length=6,
+        description="compare: rows with one cell per heading")
+    pointers: list[ArrayPointer] = Field(default_factory=list, max_length=20,
+        description="array: successive highlighted indices with a short note")
 
     @model_validator(mode="after")
     def check_diagram(self):
+        extra = {"items": self.items, "headers": self.headers, "rows": self.rows, "pointers": self.pointers}
+        allowed = {"bullets": {"items"}, "equation": {"items"}, "array": {"items", "pointers"}, "compare": {"headers", "rows"}}.get(self.kind, set())
+        if any(value and name not in allowed for name, value in extra.items()):
+            raise ValueError(f"{self.kind} visuals do not use {', '.join(n for n, v in extra.items() if v and n not in allowed)}")
+        if self.kind in allowed_kinds_without_graph():
+            if self.nodes or self.edges or self.points or self.code_lines or self.trace:
+                raise ValueError(f"{self.kind} visuals do not use graph, plot or code fields")
+            if self.kind in TEXT_KINDS and not 1 <= len(self.items) <= 6:
+                raise ValueError(f"{self.kind} visuals need 1 to 6 items")
+            if self.kind == "array":
+                if not 2 <= len(self.items) <= 10 or any(len(x) > 12 for x in self.items) or not self.pointers:
+                    raise ValueError("Arrays need 2 to 10 short cells and at least one pointer step")
+                if any(p.index >= len(self.items) for p in self.pointers):
+                    raise ValueError("Array pointers must reference existing cells")
+            if self.kind == "compare":
+                if len(self.headers) not in {2, 3} or not 1 <= len(self.rows) <= 6 or any(len(r) != len(self.headers) for r in self.rows):
+                    raise ValueError("Comparisons need 2-3 headings and 1-6 rows with one cell per heading")
+            return self
         if self.kind == "code_trace":
             if not self.code_lines or not self.trace or any(len(line) > 60 for line in self.code_lines):
                 raise ValueError("Code traces require up to 12 short code lines and measured trace states")
@@ -64,6 +98,12 @@ class VisualSpec(VisualModel):
                 raise ValueError("Code traces use code lines and state, not graph or plot fields")
             if any(step.line > len(self.code_lines) for step in self.trace):
                 raise ValueError("Trace highlights must reference existing code lines")
+            try:
+                # Compile only (never executed here): the runner can verify Python traces alone.
+                compile("\n".join(self.code_lines), "<teaching-example>", "exec")
+            except (SyntaxError, ValueError):
+                raise ValueError("code_trace code must be valid Python 3 because the runner verifies it; "
+                                 "translate other languages to Python or use an array visual") from None
             return self
         if self.code_lines or self.trace:
             raise ValueError("Only code_trace visuals use code and state fields")
@@ -141,9 +181,24 @@ class RenderRequest(VisualModel):
         return self
 
 
+def allowed_kinds_without_graph():
+    return {"bullets", "compare", "array", "equation"}
+
+
 def visual_step_count(visual: VisualSpec):
+    if visual.kind in TEXT_KINDS:
+        return len(visual.items)
+    if visual.kind == "compare":
+        return 1 + len(visual.rows)
+    if visual.kind == "array":
+        return 1 + len(visual.pointers)
     if visual.kind == "code_trace":
         return 1 + len(visual.trace)
     if visual.kind == "plot":
         return 1 + 2 * len(visual.points) + int(visual.fit_line)
     return len(visual.nodes) + 2 * len(visual.edges)
+
+
+class LegacyVisualSpec(VisualSpec):
+    """The single-owner MVP renders with Manim, which draws only the original kinds."""
+    kind: Literal["process", "cycle", "tree", "plot", "code_trace"]

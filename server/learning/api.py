@@ -207,12 +207,17 @@ def submit(body: Answer, request: Request, db: DB, user: User):
                       route_revision=session.route_revision)
     db.add(attempt)
     db.flush()
-    if assessment.public["kind"] == "python":
-        request.app.state.runner.ready()
-        code = body.answer.get("code")
-        if not isinstance(code, str) or not code.strip() or len(code) > 16000:
-            raise HTTPException(422, "Enter between 1 and 16000 characters of Python code.")
-        session.position = {**session.position, "code_draft": code}
+    if assessment.public["kind"] in {"python", "short"}:
+        if assessment.public["kind"] == "python":
+            request.app.state.runner.ready()
+            code = body.answer.get("code")
+            if not isinstance(code, str) or not code.strip() or len(code) > 16000:
+                raise HTTPException(422, "Enter between 1 and 16000 characters of Python code.")
+            session.position = {**session.position, "code_draft": code}
+        else:
+            text = body.answer.get("text")
+            if not isinstance(text, str) or not text.strip() or len(text) > 4000:
+                raise HTTPException(422, "Write an answer of up to 4000 characters.")
         enqueue(db, request.app.state.settings, user.id, "grade", {"attempt_id": attempt.id}, scope=f"private:{user.id}", priority=0)
         session.state = "submitting"
     else:
@@ -275,7 +280,11 @@ def fallback_access(session_id: str, request: Request, db: DB, user: User):
     block = ready_for_objective(db, session.curriculum_id, session.objective_id, profile="recap")
     if not block:
         raise HTTPException(409, "A relevant recap is not ready. You can save and return later.")
-    return {"block_id": block.id, "clips": [{"id": x.id, "url": request.app.state.objects.sign(x.object_key)}
+    scenes = (block.script or {}).get("scenes", [])
+    captions = {x.position: x for x in db.scalars(select(Asset).where(Asset.block_id == block.id, Asset.kind == "caption"))}
+    return {"block_id": block.id, "clips": [{"id": x.id, "url": request.app.state.objects.sign(x.object_key), "mime": x.mime, "duration": x.duration,
+        "scene": scenes[x.position] if x.position < len(scenes) else None,
+        "caption": request.app.state.objects.sign(captions[x.position].object_key) if x.position in captions else None}
         for x in db.scalars(select(Asset).where(Asset.block_id == block.id, Asset.kind == "clip").order_by(Asset.position))]}
 
 

@@ -21,6 +21,12 @@ implemented, but this environment still needs its runtime/model/voice setup and
 quality evaluation. Current image/YouTube extraction uses Gemini. Storage and
 isolated Python grading are separate requirements for either AI route.
 
+## Run it on one laptop (no cloud accounts)
+
+See [LOCAL_PLATFORM.md](LOCAL_PLATFORM.md): `.\scripts\start-local.ps1`, then open
+http://127.0.0.1:8000. Local PostgreSQL, Ollama, Piper and Remotion visuals,
+all stored inside this folder.
+
 ## Start here
 
 1. Read [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) and

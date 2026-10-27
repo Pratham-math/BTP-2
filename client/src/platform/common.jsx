@@ -22,16 +22,22 @@ export function useResource(path, interval = 0) {
   }, [path, interval, refresh])
   return { data, error, reload: () => setRefresh(x => x + 1) }
 }
+// Saved stage names -> what the learner should read.
+const STAGES = [[/^audit/, 'Reading your material'], [/^inventory|^curriculum_scope/, 'Setting the lesson scope'], [/^objective_batch/, 'Planning learning objectives'],
+  [/^assessment_verify|^assessment_valid|^reference/, 'Checking the assessments'], [/^assessment/, 'Writing assessments'], [/^author_recap|^verify_recap/, 'Writing the recap'],
+  [/^author/, 'Writing the explanation'], [/^verify/, 'Checking the explanation'], [/^speech/, 'Recording narration'], [/^render/, 'Preparing scenes'], [/^short_grade/, 'Grading your answer']]
+export const stageLabel = stage => STAGES.find(([pattern]) => pattern.test(stage || ''))?.[1] || (stage || 'queued').replaceAll('_', ' ')
 export function JobView({ id }) {
   const { data: job, error, reload } = useResource(`/api/jobs/${id}`, 3500), [actionError, setActionError] = useState('')
   async function action(name) { try { await post(`/api/jobs/${id}/${name}`); reload() } catch (e) { setActionError(e.message) } }
   if (!job) return <Notice error={!!error}>{error || 'Loading preparation…'}</Notice>
-  return <article className="panel job"><div className="row"><h2>Preparation</h2><Badge>{job.state}</Badge></div><p>{job.stage.replaceAll('_', ' ')}</p><p className="muted">Stages are saved. You can leave this page and return.</p>
+  return <article className="panel job"><div className="row"><h2>Preparation</h2><Badge>{job.state}</Badge></div><p>{['queued', 'running'].includes(job.state) ? stageLabel(job.stage) + '…' : stageLabel(job.stage)}</p><p className="muted">Stages are saved. You can leave this page and return.</p>
     <Notice error={!!job.error_code}>{job.result?.message || job.error_code}</Notice><Notice error>{actionError}</Notice>
     {['queued', 'running'].includes(job.state) && <button className="secondary" onClick={() => action('cancel')}>Cancel preparation</button>}
     {job.kind !== 'grade' && ['failed', 'cancelled', 'waiting_for_input', 'waiting_for_review'].includes(job.state) && <button onClick={() => action('retry')}>Retry saved stages</button>}
     {job.kind === 'grade' && ['failed', 'cancelled', 'waiting_for_input'].includes(job.state) && <p>Return to the saved learning checkpoint to retry grading.</p>}
-    {job.result?.curriculum_id && <Link className="button" to={`/lessons/${job.result.curriculum_id}`}>Open curriculum</Link>}
+    {job.result?.skipped_sections?.length > 0 && <details><summary>{job.result.skipped_sections.length} unreadable section(s) were skipped</summary><ul>{job.result.skipped_sections.map(x => <li key={x}>{x}</li>)}</ul></details>}
+    {job.result?.curriculum_id && <Link className="button" to={`/lessons/${job.result.curriculum_id}`}>{job.kind === 'quick_lesson' ? 'Open your lesson ↗' : 'Open curriculum'}</Link>}
     {job.result?.source_id && <Link className="button" to={`/sources/${job.result.source_id}`}>Inspect source preview</Link>}
   </article>
 }

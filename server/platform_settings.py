@@ -32,6 +32,11 @@ class PlatformSettings:
     max_queue: int = 30
     daily_model_calls: int = 200
     max_upload_bytes: int = 25 * 1024 * 1024
+    profile: str = "production"
+
+    @property
+    def local(self):
+        return self.profile == "local"
 
     @classmethod
     def from_env(cls):
@@ -56,14 +61,15 @@ class PlatformSettings:
             max_jobs_per_user=int(os.getenv("MAX_JOBS_PER_USER", "3")),
             max_queue=int(os.getenv("MAX_QUEUED_JOBS", "30")),
             daily_model_calls=int(os.getenv("DAILY_MODEL_CALL_LIMIT", "200")),
+            profile=os.getenv("PLATFORM_PROFILE", "production").lower(),
         )
 
     def checks(self):
         return {
             "database": bool(self.database_url),
-            "authentication": bool(self.supabase_url and self.supabase_public_key and self.google_oauth_verified),
-            "private_storage": bool(self.s3_endpoint and self.s3_bucket and self.s3_access_key and self.s3_secret_key),
-            "python_runner": bool(self.runner_url and self.runner_language_id and self.runner_verified),
+            "authentication": self.local or bool(self.supabase_url and self.supabase_public_key and self.google_oauth_verified),
+            "private_storage": self.local or bool(self.s3_endpoint and self.s3_bucket and self.s3_access_key and self.s3_secret_key),
+            "python_runner": self.local or bool(self.runner_url and self.runner_language_id and self.runner_verified),
             "generation_models": bool(self.text_model and self.verifier_model and (
                 os.getenv("PLATFORM_TEXT_PROVIDER", "gemini") == "ollama" or os.getenv("GEMINI_API_KEY", "") not in {"", "put_your_key_here"}) and (
                 os.getenv("PLATFORM_SPEECH_PROVIDER", "gemini") == "piper" or (os.getenv("PLATFORM_SPEECH_MODEL") and os.getenv("GEMINI_API_KEY", "") not in {"", "put_your_key_here"}))),
@@ -72,6 +78,8 @@ class PlatformSettings:
     def source_features(self):
         storage = self.checks()["private_storage"]
         vision = os.getenv("GEMINI_API_KEY", "") not in {"", "put_your_key_here"}
+        if self.local:
+            return {"text": True, "topic": True, "document": True, "image": vision, "youtube": False}
         return {"text": True, "topic": self.topic_sources,
                 "document": self.document_sources and storage and os.getenv("DOCUMENT_SANDBOX_VERIFIED", "false").lower() == "true",
                 "image": self.vision_sources and storage and vision,

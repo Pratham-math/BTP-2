@@ -256,8 +256,9 @@ def test_lease_recovery_cancellation_and_scoped_dedup(platform):
     context.save("stage", {"x": 1}, {"accepted": True})
     with factory.begin() as db:
         db.get(Job, first["id"]).lease_until = time.time() - 1
-    recovered = claim(factory)
-    assert recovered["fence"] == first["fence"] + 1
+    # Windows clock ties a and b on created_at; scope to alice so the claim must recover a.
+    recovered = claim(factory, owner_id=ids["alice"])
+    assert recovered["id"] == identifier and recovered["fence"] == first["fence"] + 1
     from server.providers.base import GenerationError
     with pytest.raises(GenerationError, match="recovered"):
         context.finish({"stale": True})

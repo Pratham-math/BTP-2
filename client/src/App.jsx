@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { BrowserRouter, Link, NavLink, Navigate, Route, Routes, useParams } from 'react-router-dom'
 import { AuthProvider, useAuth } from './platform/auth'
 import { Badge, JobView, Notice } from './platform/common'
@@ -7,6 +7,21 @@ import { Classroom, CoursePage, ReviewPage } from './pages/Classroom'
 import { Account } from './pages/Account'
 const Player = lazy(() => import('./player/Player').then(module => ({ default: module.Player })))
 function JobPage() { const { id } = useParams(); return <JobView id={id} /> }
+function LocalLogin({ auth }) {
+  const [mode, setMode] = useState('login'), [form, setForm] = useState({ name: '', login: '', password: '' }), [busy, setBusy] = useState(false)
+  const field = key => e => setForm({ ...form, [key]: e.target.value })
+  async function submit(e) {
+    e.preventDefault(); setBusy(true)
+    await auth.localAuth(mode, mode === 'register' ? form : { login: form.login, password: form.password }); setBusy(false)
+  }
+  return <form className="local-login" onSubmit={submit}>
+    {mode === 'register' && <label>Your name<input required maxLength={120} value={form.name} onChange={field('name')} autoComplete="name" /></label>}
+    <label>Email or username<input required minLength={3} maxLength={320} value={form.login} onChange={field('login')} autoComplete="username" /></label>
+    <label>Password<input required type="password" minLength={8} maxLength={200} value={form.password} onChange={field('password')} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} /></label>
+    <div className="row"><button className="primary" disabled={busy}>{mode === 'register' ? 'Create account' : 'Sign in'}</button>
+      <button type="button" className="text-button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>{mode === 'login' ? 'New here? Create an account' : 'Have an account? Sign in'}</button></div>
+  </form>
+}
 function Shell() {
   const auth = useAuth()
   if (auth.loading) return <div className="loading-screen" role="status">Opening your workspace…</div>
@@ -18,7 +33,7 @@ function Shell() {
     <Link className="brand" to="/"><span className="brand-icon">b.</span>BTP2<span className="brand-sub">LEARNING STUDIO</span></Link>
     <section className="login-content"><p className="eyebrow">Understand. Practice. Build.</p><h1>Make the next<br />concept click.</h1>
       <p>Source-grounded lessons, visual explanations, and practice that helps you decide what to learn next.</p>
-      {auth.config?.auth_configured && auth.config?.google_oauth_verified ? <button className="primary" onClick={auth.signIn}>Continue with Google <span aria-hidden="true">↗</span></button>
+      {auth.config?.auth_mode === 'local' ? <LocalLogin auth={auth} /> : auth.config?.auth_configured && auth.config?.google_oauth_verified ? <button className="primary" onClick={auth.signIn}>Continue with Google <span aria-hidden="true">↗</span></button>
         : <Notice>Google sign-in setup and verification are still required. See PLATFORM_SETUP.md before opening enrollment.</Notice>}
       <Notice error>{auth.error}</Notice>
       {auth.config?.setup_required?.length > 0 && <div className="setup-note"><h2>Setup in progress</h2><p>{auth.config.setup_required.map(x => x.replaceAll('_', ' ')).join(' · ')}</p></div>}

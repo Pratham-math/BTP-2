@@ -29,7 +29,7 @@ def main():
         try:
             request = json.loads(line)
             name, text = request["filename"], request["text"]
-            if not re.fullmatch(r"scene-[1-3]\.tmp\.wav", name) or not isinstance(text, str) or not 1 <= len(text) <= 1200:
+            if not re.fullmatch(r"scene-\d{1,2}(-utterance-\d{1,2})?\.tmp\.wav", name) or not isinstance(text, str) or not 1 <= len(text) <= 1200:
                 raise ValueError("Invalid speech request")
             output = output_dir / name
             if output.is_symlink() or output.resolve().parent != output_dir:

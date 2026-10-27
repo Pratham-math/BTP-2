@@ -36,6 +36,9 @@ def create_app(settings=None, *, engine=None, verify_token=None, objects=None, r
     app = FastAPI(title="BTP2 Teaching Platform", version="3.0.0", lifespan=lifespan)
     app.state.settings, app.state.engine = settings, engine
     app.state.db = session_factory(engine) if engine else None
+    if settings.local:
+        from server.local_services import LocalObjectStore, LocalRunner, verify_local_token
+        verify_token, objects, runner = verify_token or verify_local_token, objects or LocalObjectStore(), runner or LocalRunner()
     app.state.verify_token = verify_token or SupabaseVerifier(settings)
     app.state.objects = objects or ObjectStore(settings)
     app.state.runner = runner or JudgeRunner(settings)
@@ -104,7 +107,7 @@ def create_app(settings=None, *, engine=None, verify_token=None, objects=None, r
 
     @app.get("/api/config")
     def config():
-        return {"supabase_url": settings.supabase_url, "supabase_publishable_key": settings.supabase_public_key,
+        return {"auth_mode": "local" if settings.local else "supabase", "supabase_url": settings.supabase_url, "supabase_publishable_key": settings.supabase_public_key,
                 "auth_configured": bool(settings.supabase_url and settings.supabase_public_key),
                 "google_oauth_verified": settings.google_oauth_verified,
                 "source_features": settings.source_features(),
@@ -115,6 +118,9 @@ def create_app(settings=None, *, engine=None, verify_token=None, objects=None, r
     from server import erasure  # Register account/maintenance routes before inclusion.
     from server.learning.api import router as learning
     from server.lessons.editing import router as editing
+    if settings.local:
+        from server.local_api import router as local_routes
+        app.include_router(local_routes)
     app.include_router(resources)
     app.include_router(learning)
     app.include_router(editing)

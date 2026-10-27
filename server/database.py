@@ -31,6 +31,14 @@ class Profile(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class LocalCredential(Base):
+    """Local-profile password login only; production identities come from Supabase."""
+    __tablename__ = "local_credentials"
+    profile_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"), primary_key=True)
+    login: Mapped[str] = mapped_column(String(320), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(200))
+
+
 class Course(Record, Base):
     __tablename__ = "courses"
     owner_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"), index=True)
@@ -226,6 +234,10 @@ def make_engine(url: str):
         def foreign_keys(connection, _):
             connection.execute("PRAGMA foreign_keys=ON")
         return engine
+    from sqlalchemy.engine import make_url
+    if make_url(url).host in {"127.0.0.1", "localhost", "::1"}:
+        # Loopback-only local database: no network path to protect with TLS.
+        return create_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=5, pool_timeout=10, hide_parameters=True)
     import certifi
     from pathlib import Path
     root = Path(os.getenv("DATABASE_SSL_ROOT_CERT", certifi.where()))

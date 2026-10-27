@@ -3,6 +3,13 @@ import { createClient } from '@supabase/supabase-js'
 import { api, setTokenProvider } from './api'
 const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
+const LOCAL_TOKEN = 'btp2:local-token'
+function localSession(token) {
+  try {
+    const claims = JSON.parse(atob(token.split('.')[1].replaceAll('-', '+').replaceAll('_', '/')))
+    return claims.exp * 1000 > Date.now() ? { user: { id: claims.sub }, access_token: token } : null
+  } catch { return null }
+}
 export function AuthProvider({ children }) {
   const [config, setConfig] = useState(null), [client, setClient] = useState(null), [session, setSession] = useState(null)
   const [profileState, setProfileState] = useState(null), [profileAttempt, setProfileAttempt] = useState(0)
@@ -17,6 +24,13 @@ export function AuthProvider({ children }) {
     api('/api/config').then(async config => {
       if (!active) return
       setConfig(config)
+      if (config.auth_mode === 'local') {
+        // Local profile: server-issued token kept in this browser.
+        let stored = null
+        try { stored = localSession(localStorage.getItem(LOCAL_TOKEN) || '') } catch {}
+        setTokenProvider(async () => { try { return localStorage.getItem(LOCAL_TOKEN) } catch { return null } })
+        setSession(stored); setInitializing(false); return
+      }
       if (!config.auth_configured) { setInitializing(false); return }
       instance = createClient(config.supabase_url, config.supabase_publishable_key, { auth: { flowType: 'pkce', autoRefreshToken: true, persistSession: true, detectSessionInUrl: true } })
       setClient(instance)
@@ -58,14 +72,22 @@ export function AuthProvider({ children }) {
     return () => { active = false; clearTimeout(timeout); controller.abort() }
   }, [userId, accessToken, profileAttempt])
   function retryProfile() { setError(''); setProfileAttempt(attempt => attempt + 1) }
+  async function localAuth(kind, body) {
+    setError('')
+    try {
+      const result = await api(`/api/local/${kind}`, { method: 'POST', body: JSON.stringify(body) })
+      localStorage.setItem(LOCAL_TOKEN, result.token); setSession(localSession(result.token))
+    } catch (e) { setError(e.message) }
+  }
   async function signIn() {
     setError('')
     const { error } = await client.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin + '/auth/callback' } })
     if (error) setError(error.message)
   }
   async function signOut() {
+    if (config?.auth_mode === 'local') { localStorage.removeItem(LOCAL_TOKEN); setSession(null); setProfileState(null); return }
     const { error } = await client.auth.signOut()
     if (error) setError(error.message); else { setSession(null); setProfileState(null) }
   }
-  return <AuthContext.Provider value={{ config, profile, session, loading, error: error || profileError, signIn, signOut, retryProfile }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ config, profile, session, loading, error: error || profileError, signIn, signOut, retryProfile, localAuth }}>{children}</AuthContext.Provider>
 }

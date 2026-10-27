@@ -73,3 +73,39 @@ def trace_harness(visual):
 def trace_key():
     return GradingKey(tests=[{"stdin": "", "expected": "TRACE_OK\n", "category": "example-trace", "essential": True}],
                       hints=["Check the source example."], explanation="The illustrated states must occur in this program in the depicted order.").model_dump()
+
+
+def measured_trace(visual, run):
+    """Local runner only: keep the author's chosen lines and variable names, but take every
+    value from real execution, so a pictured state can never be hand-miscalculated.
+    Returns the corrected visual, or None when a chosen line is never reached."""
+    from server.visuals import VisualSpec
+    measure = trace_harness(visual).split("_cursor = 0")[0] + "print(json.dumps(_events))\n"
+    ok, output = run(measure, "")
+    if not ok:
+        return None
+    try:
+        events = json.loads(output.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return None
+    spec, cursor, states = visual.model_dump(), 0, []
+    for wanted in spec["trace"]:
+        while cursor < len(events) and events[cursor][0] != wanted["line"]:
+            cursor += 1
+        if cursor == len(events):
+            return None
+        _, values, arrays = events[cursor]
+        cursor += 1
+        state = {**wanted, "variables": {k: values[k] for k in wanted["variables"] if k in values}}
+        state["array"] = arrays.get(wanted["array_name"], []) if wanted["array_name"] else []
+        if not state["array"]:
+            state["array_name"] = ""
+        index = values.get(wanted["index_variable"]) if wanted["index_variable"] else None
+        state["active_index"] = int(index) if index and index.isdigit() and int(index) < len(state["array"]) else None
+        if state["active_index"] is None:
+            state["index_variable"] = ""
+        states.append(state)
+    try:
+        return VisualSpec.model_validate({**spec, "trace": states})
+    except ValueError:
+        return None

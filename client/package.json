@@ -10,14 +10,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.118.0",
-    "react-router-dom": "^7.9.0",
-    "@uiw/react-codemirror": "^4.25.0",
     "@codemirror/lang-python": "^6.2.1",
+    "@remotion/player": "^4.0.290",
+    "@supabase/supabase-js": "2.118.0",
+    "@uiw/react-codemirror": "^4.25.0",
     "@vitejs/plugin-react": "6.1.1",
-    "vite": "8.3.5",
+    "katex": "^0.16.11",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "react-router-dom": "^7.9.0",
+    "remotion": "^4.0.290",
+    "vite": "8.3.5"
   },
   "devDependencies": {
     "@testing-library/dom": "10.4.2",

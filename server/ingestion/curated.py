@@ -31,9 +31,40 @@ class ArticleText(HTMLParser):
             self.parts.append(data)
 
 
+def wikipedia_evidence(topic, *, limit=40000):
+    api = "https://en.wikipedia.org/w/api.php"
+    headers = {"User-Agent": "BTP2-Learning-Studio/1.0 (https://github.com/Pratham-math/BTP-2; college project)"}
+    with httpx.Client(timeout=30, follow_redirects=False, headers=headers) as client:
+        found = client.get(api, params={"action": "query", "list": "search", "srsearch": topic, "srlimit": 1, "format": "json"})
+        found.raise_for_status()
+        query = found.json().get("query", {})
+        hits = query.get("search", [])
+        suggestion = query.get("searchinfo", {}).get("suggestion")
+        if not hits and suggestion:
+            # A misspelt topic ("bianry search") finds nothing; Wikipedia suggests the fix.
+            found = client.get(api, params={"action": "query", "list": "search", "srsearch": suggestion, "srlimit": 1, "format": "json"})
+            found.raise_for_status()
+            hits = found.json().get("query", {}).get("search", [])
+        if not hits:
+            raise GenerationError("SOURCES_REQUIRED", "No reference article matched this topic. Add notes or a document instead.")
+        title = hits[0]["title"]
+        page = client.get(api, params={"action": "query", "prop": "extracts", "explaintext": 1, "titles": title, "redirects": 1, "format": "json"})
+        page.raise_for_status()
+    text = next(iter(page.json()["query"]["pages"].values())).get("extract", "").strip()
+    if not text:
+        raise GenerationError("SOURCE_UNAVAILABLE", "The reference article was empty. Add notes or a document instead.")
+    # ponytail: keep the article's opening sections; very long articles exceed one lesson anyway.
+    text = text.split("\n== See also ==")[0].split("\n== References ==")[0][:limit]
+    url = "https://en.wikipedia.org/wiki/" + title.replace(" ", "_")
+    blocks = text_blocks(text, method="wikipedia", location=url)
+    for block in blocks:
+        block["id"] = "wiki-" + block["id"]
+    return blocks
+
+
 def fetch_topic_evidence(topic):
-    if not any(word in topic.lower() for word in ("python", "loop", "function", "list", "traversal", "search")):
-        raise GenerationError("SOURCES_REQUIRED", "This topic is outside the initial Python source collection. Supply authoritative notes or documents before planning it.")
+    if "python" not in topic.lower():
+        return wikipedia_evidence(topic)
     urls = ["https://docs.python.org/3/tutorial/controlflow.html", "https://docs.python.org/3/tutorial/datastructures.html"]
     blocks = []
     for number, url in enumerate(urls, 1):

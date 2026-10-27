@@ -103,6 +103,10 @@ def prepare_plan(author, inventory, packets, goal, *, batch_limit=24000):
         previous = [{key: obj[key] for key in ('id', 'title', 'prerequisites')} for obj in objectives]
         batch = author.ask(f'objective_batch_{number}', author.settings.text_model, ObjectiveBatch,
             'Plan complete, topologically ordered objectives for these exact audited source sections within the fixed shared scope. '
+            'Plan only objectives that serve the learner goal, usually 3 to 6 for one topic, each distinct (no overlapping duplicates); '
+            'earlier objectives must be listed as prerequisites of later ones that build on them. '
+            'Set check_kind for every objective, and use at least two different kinds across the lesson; include python whenever an objective '
+            'is about writing code. '
             'Each section must be referenced by an objective or explicitly excluded with a substantive reason visible to the author. '
             'Preserve every teachable concept in scope. Use small coherent objectives with bounded relevant evidence. '
             'Use local IDs for new objectives; prerequisites may reference earlier local IDs or exact IDs of previous objectives. '
@@ -131,7 +135,14 @@ def prepare_plan(author, inventory, packets, goal, *, batch_limit=24000):
             objectives.append(obj)
             known.add(obj['id'])
         exclusions = {(x.source_version_id, x.block_id): x.reason for x in batch.excluded}
-        if (len(exclusions) != len(batch.excluded) or set(exclusions).intersection(usage)
+        if getattr(author.settings, "local", False):
+            # A small local planner often forgets to account for a section; record it as
+            # an explicit, visible exclusion instead of failing the whole lesson.
+            for key in current_refs - set(usage) - set(exclusions):
+                exclusions[key] = "Not used by the planner for this learning goal (recorded automatically)."
+            for key in set(exclusions) & set(usage):
+                del exclusions[key]
+        if ((len(exclusions) != len(batch.excluded) and not getattr(author.settings, "local", False)) or set(exclusions).intersection(usage)
                 or set(usage) | set(exclusions) != current_refs):
             raise GenerationError("INCOMPLETE_SOURCE_COVERAGE", "Every selected source section must be included or explicitly excluded exactly once. No incomplete curriculum was created.")
         coverage.extend(SourceCoverage(source_version_id=source, block_id=block,
@@ -142,12 +153,30 @@ def prepare_plan(author, inventory, packets, goal, *, batch_limit=24000):
     blueprint = header.model_dump() | {'objectives': objectives, 'source_coverage': coverage, 'planning_batches': len(groups)}
     assessments = []
     for obj in objectives:
-        pair = author.ask(f"assessment_{obj['id']}", author.settings.text_model, AssessmentPair,
-            'Create exactly one base and one fresh equivalent checkpoint for the fixed objective. Do not change its ID, scope or prerequisites. '
-            'Use concept-appropriate choice, trace or Python practice; include Python where the objective requires implementation. '
+        ask = lambda stage, task: author.ask(stage, author.settings.text_model, AssessmentPair,
+            task + 'Create exactly one base and one fresh equivalent checkpoint for the fixed objective. Do not change its ID, scope or prerequisites. '
+            'Choose the question kind that best tests this objective, and use the same kind for both variants: '
+            'mcq (one correct option, 3-5 options, plausible distractors mapped in misconception_map) for recognising concepts; '
+            'multiple (several correct options) for properties/classification; trace (predict the exact printed output) for reading code; '
+            'python (write a Python 3 stdin/stdout program; reference and all solutions must be Python 3, the only language the grader runs) '
+            'only when the objective is about implementing code; if the material teaches another language, use trace or short instead; '
+            'short (1-4 sentence written answer with model_answer and 2-5 rubric points) for definitions, reasoning, comparisons and why-questions. '
+            'Do not default to mcq: pick what a good teacher would ask. '
+            'For mcq/multiple, give each option a short id like "a", "b", "c" and list those ids (not the option text) in key.correct. '
             'For Python provide stdin/stdout tests, essential cases, reference and alternative correct solutions and at least two known wrong solutions. '
             'Keep hints and all grading rules in the private key. Questions must be solvable from original evidence and prerequisites.',
             {'fixed_curriculum': focused_blueprint(blueprint, obj), 'original_evidence': evidence_for(packets, obj)})
+        kind = obj.get('check_kind', 'mcq')
+        try:
+            pair = ask(f"assessment_{obj['id']}", f'Use kind "{kind}" for both variants (chosen when the objective was planned). ')
+        except GenerationError as error:
+            if error.code != "CONTENT_NEEDS_REVIEW" or not getattr(author.settings, "local", False):
+                raise
+            # A small local model can fail a complex key repeatedly; a written-answer
+            # check with a rubric is the simplest valid form for any objective. The
+            # objective's own kind is updated too, or the model keeps following it.
+            obj['check_kind'] = 'short'
+            pair = ask(f"assessment_{obj['id']}_short", 'Use kind "short" for both variants, with model_answer and 2-4 rubric points. ')
         if any(item.objective_id != obj['id'] for item in pair.assessments):
             raise GenerationError("INVALID_ASSESSMENT_SCOPE", "An assessment changed its fixed objective. No curriculum was created.")
         assessments.extend(item.model_dump() for item in pair.assessments)

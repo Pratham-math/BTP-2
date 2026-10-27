@@ -1,7 +1,11 @@
 """Canonical lesson schema; legacy scripts may omit visual plans."""
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from server.visuals import VisualSpec
+from server.visuals import LegacyVisualSpec
+
+
+class VisualSpec(LegacyVisualSpec):
+    pass
 
 
 class Scene(BaseModel):

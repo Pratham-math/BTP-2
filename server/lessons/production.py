@@ -12,6 +12,7 @@ from server.media import mux_animation, render_animation, verify_video
 from server.providers.base import inspect_audio
 from server.providers.base import GenerationError
 from server.providers.registry import create_providers
+from server.runtime import run_command
 
 
 def vtt_time(seconds):
@@ -72,11 +73,19 @@ def produce_block(draft: BlockDraft, folder: Path, context, objects, prefix):
             audio = folder / f"scene-{index}.wav"
             artifact = join_wavs(paths, audio)
             duration = artifact.duration + .5
+            remotion = os.getenv("PLATFORM_RENDERER", "remotion") == "remotion"
             inputs = {"scene": scene.model_dump(), "audio": file_hash(audio), "duration": duration,
-                      "cues": cues, "template": "platform-manim-v2", "profile": "720p24"}
-            silent, clip = folder / f"scene-{index}.silent.mp4", folder / f"scene-{index}.mp4"
+                      "cues": cues, "template": "remotion-v1" if remotion else "platform-manim-v2", "profile": "720p24"}
+            silent, clip = folder / f"scene-{index}.silent.mp4", folder / f"scene-{index}.{'m4a' if remotion else 'mp4'}"
             saved = context.saved(f"render_{index}", inputs)
-            if not saved or not clip.exists() or file_hash(clip) != saved["checksum"]:
+            if remotion:
+                # The browser draws the scene (Remotion) from the validated script;
+                # only narration audio is encoded here, with the same lead-in/tail.
+                if not saved or not clip.exists() or file_hash(clip) != saved["checksum"]:
+                    run_command(["ffmpeg", "-y", "-loglevel", "error", "-i", str(audio), "-af", "adelay=150:all=1,apad=pad_dur=0.35",
+                                 "-c:a", "aac", "-b:a", "96k", "-ar", "48000", "-ac", "1", "-t", f"{duration:.3f}", "-movflags", "+faststart", str(clip)], timeout=120)
+                    context.save(f"render_{index}", inputs, {"checksum": file_hash(clip), "duration": duration})
+            elif not saved or not clip.exists() or file_hash(clip) != saved["checksum"]:
                 render_animation(scene, duration, silent, index, len(draft.scenes), "720p24", cue_times=[x["start"] for x in cues], cue_steps=[x["visual_step"] for x in cues])
                 context.check()
                 mux_animation(silent, audio, clip, "720p24", .15, .35)
@@ -85,7 +94,7 @@ def produce_block(draft: BlockDraft, folder: Path, context, objects, prefix):
                 context.save(f"render_{index}", inputs, {"checksum": file_hash(clip), "duration": duration})
             caption = folder / f"scene-{index}.vtt"
             caption.write_text("WEBVTT\n\n" + "\n\n".join(f"{i}\n{vtt_time(c['start'])} --> {vtt_time(c['end'])}\n{html.escape(' '.join(c['text'].split()))}" for i, c in enumerate(cues, 1)) + "\n", encoding="utf-8")
-            for path, kind, mime in [(clip, "clip", "video/mp4"), (caption, "caption", "text/vtt")]:
+            for path, kind, mime in [(clip, "clip", "audio/mp4" if remotion else "video/mp4"), (caption, "caption", "text/vtt")]:
                 checksum = file_hash(path)
                 key = f"{prefix}/{checksum}{path.suffix}"
                 context.check()

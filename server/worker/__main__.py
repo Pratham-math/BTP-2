@@ -28,6 +28,9 @@ def execute(factory, settings, data, *, objects=None, runner=None):
     folder.mkdir(parents=True, exist_ok=True)
     control, stop = JobControl(folder), Event()
     token = CURRENT_CONTROL.set(control)
+    if settings.local:
+        from server.local_services import LocalObjectStore, LocalRunner
+        runner, objects = runner or LocalRunner(), objects or LocalObjectStore()
     runner = runner or JudgeRunner(settings)
     objects = objects or ObjectStore(settings)
 
@@ -64,7 +67,8 @@ def execute(factory, settings, data, *, objects=None, runner=None):
             context.finish({"message": str(error) if isinstance(error, GenerationError) else "A preparation service failed. Completed stages are saved; check service configuration and retry."}, state, code)
         except GenerationError:
             pass  # Cancellation or a recovered lease owns the final state.
-        log.warning("job=%s kind=%s code=%s", data["id"], data["kind"], code)
+        # The class name is safe to log (no message text) and makes SERVICE_FAILED diagnosable.
+        log.warning("job=%s kind=%s code=%s error=%s", data["id"], data["kind"], code, type(error).__name__)
     finally:
         stop.set()
         thread.join(timeout=2)

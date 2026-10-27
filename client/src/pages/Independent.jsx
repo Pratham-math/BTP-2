@@ -55,7 +55,36 @@ export function SourceDetail() {
     </section>)}{evidence?.length > 0 && <div className="row"><button className="secondary" disabled={busy} onClick={() => save(false)}>Save corrections</button><button disabled={busy || evidence.some(x => x.uncertainty.length)} onClick={() => save(true)}>Confirm source for lessons</button></div>}</>
 }
 
+function QuickLesson() {
+  const navigate = useNavigate(), [form, setForm] = useState({ title: '', prompt: '', notes: '', reference: true }), [files, setFiles] = useState([])
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  const field = key => e => setForm({ ...form, [key]: e.target.type === 'checkbox' ? e.target.checked : e.target.value })
+  async function submit(event) {
+    event.preventDefault(); setBusy(true); setError('')
+    const body = new FormData()
+    Object.entries(form).forEach(([k, v]) => body.append(k, v)); files.forEach(f => body.append('files', f))
+    try { const lesson = await api('/api/lessons/quick', { method: 'POST', body }); navigate(`/jobs/${lesson.job_id}`) } catch (e) { setError(e.message) } finally { setBusy(false) }
+  }
+  return <><PageHead eyebrow="NEW LESSON" title="What do you want to learn?">Describe it in your own words, and add your notes, PDFs or slides if you have them. We build a full learning path with videos and checks.</PageHead>
+    <form className="panel form narrow" onSubmit={submit}>
+      <label>Topic<input required minLength={3} maxLength={160} value={form.title} onChange={field('title')} placeholder="e.g. Binary search" /></label>
+      <label>What should you be able to do afterwards?<textarea required minLength={10} maxLength={6000} rows={3} value={form.prompt} onChange={field('prompt')} placeholder="e.g. Understand how binary search halves a sorted list, why it is O(log n), and write it in Python." /></label>
+      <label>Your notes (optional)<textarea rows={5} maxLength={250000} value={form.notes} onChange={field('notes')} placeholder="Paste lecture notes, definitions or code here." /></label>
+      <label>Slides or documents (optional, up to 5)<input type="file" multiple accept=".pdf,.pptx" onChange={e => setFiles([...e.target.files].slice(0, 5))} /></label>
+      {files.length > 0 && <p className="muted">{files.map(f => f.name).join(' · ')}</p>}
+      <label className="check-label"><input type="checkbox" checked={form.reference} onChange={field('reference')} />Also use a reference article on this topic</label>
+      <Notice error>{error}</Notice>
+      <button disabled={busy}>{busy ? 'Uploading…' : 'Build my lesson'}</button>
+      <p className="muted">Planning and the first video take a few minutes on this computer. You can leave and come back.</p>
+    </form></>
+}
+
 export function NewLesson() {
+  const [params] = useSearchParams()
+  return params.get('course') ? <PlannedLesson /> : <QuickLesson />
+}
+
+function PlannedLesson() {
   const sources = useResource('/api/sources'), [search] = useSearchParams(), navigate = useNavigate(), [selected, setSelected] = useState([])
   const [title, setTitle] = useState(''), [goal, setGoal] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   async function submit(event) { event.preventDefault(); setBusy(true); setError('')

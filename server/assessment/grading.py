@@ -4,7 +4,8 @@ from server.lessons.contracts import GradingKey
 
 def matches(actual: str, expected: str, comparison="trim_lines", tolerance=1e-6):
     if comparison == "exact":
-        return actual == expected
+        # print() always ends with a newline; exact still means exact spacing and content.
+        return actual.rstrip("\n") == expected.rstrip("\n")
     if comparison == "numeric":
         try:
             values, targets = [float(x) for x in actual.split()], [float(x) for x in expected.split()]

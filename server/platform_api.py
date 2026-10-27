@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -366,6 +366,66 @@ def create_lesson(body: LessonInput, request: Request, db: DB, user: User):
     job = enqueue(db, settings, user.id, "curriculum", {"lesson_id": lesson.id, "source_version_ids": versions,
         "goal": body.goal, "text_model": settings.text_model, "verifier_model": settings.verifier_model}, scope=f"private:{user.id}")
     return {"id": lesson.id, "job_id": job.id, "state": "planning"}
+
+
+UPLOAD_KINDS = {".pdf": "pdf", ".pptx": "pptx", ".png": "image", ".jpg": "image", ".jpeg": "image"}
+
+
+@router.post("/lessons/quick", status_code=202)
+def quick_lesson(request: Request, db: DB, user: User, prompt: str = Form(..., min_length=10, max_length=6000),
+                 title: str = Form("", max_length=160), notes: str = Form("", max_length=250000),
+                 reference: bool = Form(False), files: list[UploadFile] = File(default=[])):
+    """Prompt + any mix of notes, documents and a reference article -> one preparation job."""
+    settings, features = request.app.state.settings, request.app.state.settings.source_features()
+    if len(files) > 5:
+        raise HTTPException(422, "Attach up to 5 files per lesson.")
+    title = title.strip() or prompt.strip().splitlines()[0][:80]
+    if len(title) < 3:
+        raise HTTPException(422, "Give the lesson a title of at least 3 characters.")
+    sources = []
+    if notes.strip():
+        source = Source(owner_id=user.id, title=f"Notes: {title}"[:160], kind="text", metadata_json={"input": notes})
+        db.add(source)
+        db.flush()
+        evidence = text_blocks(notes)
+        db.add(SourceVersion(source_id=source.id, number=1, evidence=evidence, warnings=[], content_hash=digest(evidence)))
+        source.current_version, source.state = 1, "needs_confirmation"
+        sources.append(source)
+    for upload in files:
+        name = Path(upload.filename or "source").name
+        suffix = Path(name).suffix.lower()
+        kind = UPLOAD_KINDS.get(suffix)
+        if not kind or not features["image" if kind == "image" else "document"]:
+            raise HTTPException(422, f"{name}: attach PDF or PPTX files" + (", PNG or JPEG images." if features["image"] else "."))
+        size, source = 0, Source(id=new_id(), owner_id=user.id, title=name[:160], kind=kind, metadata_json={"suffix": suffix})
+        with tempfile.TemporaryDirectory(prefix="btp-upload-") as folder:
+            path = Path(folder) / ("source" + suffix)
+            with path.open("wb") as output:
+                while chunk := upload.file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > settings.max_upload_bytes:
+                        raise HTTPException(413, f"{name} exceeds the 25 MB upload limit. Split it into smaller files.")
+                    output.write(chunk)
+            if size == 0:
+                raise HTTPException(422, f"{name} is empty.")
+            source.object_key = f"sources/{user.id}/{source.id}/original{suffix}"
+            source.metadata_json = {**source.metadata_json, "size": size}
+            request.app.state.objects.put(source.object_key, path, upload.content_type or "application/octet-stream")
+        db.add(source)
+        sources.append(source)
+    if reference or not sources:
+        source = Source(owner_id=user.id, title=f"Reference: {title}"[:160], kind="topic", metadata_json={"input": title})  # The short title searches better than a long prompt.
+        db.add(source)
+        sources.append(source)
+    db.flush()
+    lesson = Lesson(owner_id=user.id, title=title)
+    db.add(lesson)
+    db.flush()
+    job = enqueue(db, settings, user.id, "quick_lesson", {"lesson_id": lesson.id, "source_ids": [x.id for x in sources], "goal": prompt},
+                  scope=f"private:{user.id}")
+    for source in sources:
+        source.metadata_json = {**source.metadata_json, "job_id": job.id}
+    return {"id": lesson.id, "job_id": job.id, "state": "preparing"}
 
 
 @router.get("/lessons/versions/{curriculum_id}")

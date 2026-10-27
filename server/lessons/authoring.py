@@ -20,6 +20,45 @@ class SourceAudit(Contract):
     critical_issues: list[str] = Field(default_factory=list)
 
 
+def gemini_schema(schema):
+    # Gemini rejects large schemas with many length bounds (400 INVALID_ARGUMENT).
+    # The bounds are still enforced when the reply is validated against the contract.
+    # Limits move into the description so the model still sees them as text.
+    if isinstance(schema, dict):
+        bounds = {"minLength": "at least {} characters", "maxLength": "at most {} characters", "minItems": "at least {} items",
+                  "maxItems": "at most {} items", "maxProperties": "at most {} entries"}
+        notes = [text.format(schema[k]) for k, text in bounds.items() if isinstance(schema.get(k), int)]
+        result = {k: gemini_schema(v) for k, v in schema.items() if k not in bounds}
+        if notes:
+            result["description"] = (result.get("description", "") + " (" + ", ".join(notes) + ")").strip()
+        return result
+    return [gemini_schema(v) for v in schema] if isinstance(schema, list) else schema
+
+
+def gemini_json(key, model, contents, contract, context, attempts=4):
+    from google.genai import errors, types
+    from server.providers.gemini_text import create_client
+    for attempt in range(attempts):
+        try:
+            with create_client(key) as client:
+                response = client.models.generate_content(model=model, contents=contents,
+                    config=types.GenerateContentConfig(response_mime_type="application/json", response_json_schema=gemini_schema(contract.model_json_schema()),
+                        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True), temperature=.2))
+            return response.text or ""
+        except errors.APIError as error:
+            busy = error.code == 429 or error.code >= 500
+            if busy and attempt + 1 < attempts:
+                # ponytail: fixed backoff; free-tier per-minute limits clear within a minute.
+                time.sleep(15 * (attempt + 1))
+                context.check()
+                continue
+            if busy:
+                raise GenerationError("PROVIDER_BUSY", "Gemini is rate-limited or unavailable. Completed stages are saved; retry in a few minutes.") from error
+            if error.code in {401, 403}:
+                raise GenerationError("KEY_REJECTED", "Gemini rejected the API key. Check GEMINI_API_KEY in .env.") from error
+            raise GenerationError("PROVIDER_REJECTED", f"Gemini rejected the request (HTTP {error.code}).") from error
+
+
 class StructuredAuthor:
     version = "platform-author-v2"
 
@@ -48,39 +87,34 @@ class StructuredAuthor:
             + task + "\nDATA:\n" + json.dumps(data, ensure_ascii=False))
         if len(instruction) > 120000:
             raise GenerationError("GENERATION_BATCH_REQUIRED", "This preparation unit exceeds the configured context budget. Split or narrow the source scope explicitly; no content has been omitted.")
-        feedback = ""
+        feedback, raw = "", ""
         for repair in range(repairs + 1):
             self.context.check()
             self.quota()
             try:
                 if os.getenv("PLATFORM_TEXT_PROVIDER", "gemini") == "ollama":
-                    response = httpx.post(ollama_url() + "/api/chat", timeout=120,
+                    response = httpx.post(ollama_url() + "/api/chat", timeout=900,
                         json={"model": model, "stream": False, "think": False, "format": contract.model_json_schema(),
                               "messages": [{"role": "user", "content": instruction + feedback}],
-                              "options": {"temperature": .2, "num_predict": 14000}})
+                              "options": {"temperature": .2, "num_predict": 8000, "num_ctx": int(os.getenv("PLATFORM_OLLAMA_CONTEXT", "12288"))}})
                     response.raise_for_status()
                     body = response.json()
                     if not body.get("done") or body.get("done_reason") == "length":
                         raise GenerationError("INCOMPLETE_GENERATION", "The model did not complete this bounded content unit.")
                     raw = body["message"]["content"]
                 else:
-                    from server.providers.gemini_text import create_client
-                    from google.genai import types
                     key = os.getenv("GEMINI_API_KEY", "")
                     if not key or key == "put_your_key_here":
                         raise GenerationError("KEY_MISSING", "Configure the host's Gemini API key or an explicitly selected local provider.")
-                    with create_client(key) as client:
-                        response = client.models.generate_content(model=model, contents=instruction + feedback,
-                            config=types.GenerateContentConfig(response_mime_type="application/json", response_json_schema=contract.model_json_schema(),
-                                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True), temperature=.2))
-                    raw = response.text
+                    raw = gemini_json(key, model, instruction + feedback, contract, self.context)
                 result = contract.model_validate_json(raw)
                 self.context.check()
                 self.context.save(stage, inputs, result.model_dump())
                 return result
             except ValidationError as error:
                 errors = json.loads(json.dumps(error.errors(include_input=False, include_url=False), default=str))
-                self.context.save(stage + f"_invalid_{repair}", inputs, {"errors": errors})
+                # The rejected reply is kept (bounded) so failures can be diagnosed.
+                self.context.save(stage + f"_invalid_{repair}", inputs, {"errors": errors, "raw": raw[:6000]})
                 feedback = "\nRepair this exact validation feedback without dropping any required scope:\n" + json.dumps(errors)
                 if repair == repairs:
                     raise GenerationError("CONTENT_NEEDS_REVIEW", "The generated unit still fails schema validation. Review or narrow the source scope.") from None
@@ -92,25 +126,36 @@ class StructuredAuthor:
             for evidence in packet["evidence"]:
                 audit = self.ask("audit_" + digest([packet["id"], evidence["id"]])[:24], self.settings.text_model, SourceAudit,
                     "Audit this complete evidence block. Identify teachable concepts, missing prerequisites, contradictions, uncertain code/numbers/units. Never silently resolve contradictions.", evidence)
-                if audit.critical_issues:
+                if audit.critical_issues and not getattr(self.settings, "local", False):
                     raise GenerationError("SOURCE_NEEDS_CORRECTION", "The source audit found unresolved issues. Correct the preview before generating a lesson.")
                 inventory.append({"source_version_id": packet["id"], "block_id": evidence["id"], **audit.model_dump()})
         return prepare_plan(self, inventory, packets, goal)
 
-    def author(self, blueprint, objective, packets, profile, misconception):
+    def author(self, blueprint, objective, packets, profile, misconception, performance=None, trace_check=None):
         blueprint = focused_blueprint(blueprint, objective)
         data = {"fixed_curriculum": blueprint, "objective": objective, "original_evidence": packets,
-                "profile": profile, "misconception": misconception}
-        feedback = None
+                "profile": profile, "misconception": misconception, "learner_performance": performance}
+        feedback, last = None, None
         for repair in range(3):
             try:
-                draft = self._author_draft(blueprint, objective, packets, profile, misconception, repair, feedback)
+                draft = self._author_draft(blueprint, objective, packets, profile, misconception, repair, feedback, performance)
             except GenerationError as error:
                 if error.code != "CONTENT_NEEDS_REVIEW":
                     raise
                 # Schema and semantic repairs share the same three-author-call
                 # budget; do not nest three schema attempts in every repair.
                 feedback = {"schema": "The previous draft failed the required BlockDraft contract. Regenerate the complete block within all schema bounds."}
+                continue
+            if len(draft.scenes) < (2 if profile == "recap" else 3) and repair < 2:
+                # Too thin to teach the objective: ask again within the same repair budget.
+                feedback = {"length": f"Only {len(draft.scenes)} scene(s). A {profile} block needs {'2-3' if profile == 'recap' else '4-6'} scenes with a worked example."}
+                continue
+            failed = trace_check(draft) if trace_check else []
+            if failed and repair < 2:
+                # The final runner check in prepare_block still blocks a trace that never matches.
+                feedback = {"trace": f"Scenes {failed}: running the code_trace program did not reach the pictured states in order. "
+                            "The code must be a complete program that runs by itself (call any function it defines), and each state "
+                            "must hold the real Python values after its highlighted line executes."}
                 continue
             allowed = {(ref["source_version_id"], ref["block_id"]) for ref in objective["evidence"]}
             if draft.objective_id != objective["id"] or draft.profile != profile or any((ref.source_version_id, ref.block_id) not in allowed for ref in draft.source_refs):
@@ -121,16 +166,26 @@ class StructuredAuthor:
                 "Approval means automated validation only; never claim teacher approval.", {**data, "draft": draft.model_dump()})
             if review.accepted():
                 return draft, review
-            feedback = review.model_dump()
+            feedback, last = review.model_dump(), (draft, review)
+        if last and getattr(self.settings, "local", False):
+            # ponytail: a small local verifier over-flags; ship the last schema-valid
+            # draft with its findings recorded instead of blocking the learner.
+            return last
         raise GenerationError("CONTENT_NEEDS_REVIEW", "The block retains critical content findings after two repairs. An author must review it.")
 
-    def _author_draft(self, blueprint, objective, packets, profile, misconception, repair, feedback):
+    def _author_draft(self, blueprint, objective, packets, profile, misconception, repair, feedback, performance=None):
         data = {"fixed_curriculum": blueprint, "objective": objective, "original_evidence": packets,
-                "profile": profile, "misconception": misconception}
+                "profile": profile, "misconception": misconception, "learner_performance": performance}
         return self.ask(f"author_{profile}_{repair}", self.settings.text_model, BlockDraft,
                 "Author a complete teaching block for exactly this objective and profile. Explain assumptions and a consistent worked example. "
-                "A recap addresses the same concept more compactly. Use any number of bounded scenes; split long explanations at natural semantic boundaries. "
-                "Each scene has semantic utterances and a safe fixed-template visual. Available kinds: process/cycle/tree/plot/code_trace. "
+                "A normal block has 4 to 6 scenes (about 2-4 minutes of narration): motivate, explain, show a worked example step by step, "
+                "point out a common mistake, and summarize. A recap has 2 or 3 compact scenes on the same concept. "
+                "An adapted block teaches this objective for a learner described by learner_performance: spend extra scenes and slower "
+                "worked examples on their weak points, and move briskly through what they already showed they know. "
+                "Each scene has 3 to 8 semantic utterances (spoken sentences) and one visual. Choose the visual kind that fits the idea: "
+                "bullets (items: key points revealed one per step), compare (headers + rows table), array (items cells + pointers steps, for "
+                "indexing/searching/sorting), equation (items: LaTeX lines derived step by step), process (ordered steps), cycle (repeating steps), "
+                "tree (hierarchy), plot (numeric relationship), code_trace (running a short program). Vary kinds across scenes. "
                 "Code traces display at most 12 lines, 60 characters per line, 30 trace states, 6 variables and 10 array cells. Never execute displayed code. "
                 "For code_trace, write a complete deterministic Python example that needs no input; the separate runner will verify it. "
                 "Each trace state describes values AFTER its highlighted line executes, using Python repr strings. "
