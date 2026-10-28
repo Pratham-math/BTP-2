@@ -164,6 +164,9 @@ def prepare_plan(author, inventory, packets, goal, *, batch_limit=24000):
             'Do not default to mcq: pick what a good teacher would ask. '
             'For mcq/multiple, give each option a short id like "a", "b", "c" and list those ids (not the option text) in key.correct. '
             'For Python provide stdin/stdout tests, essential cases, reference and alternative correct solutions and at least two known wrong solutions. '
+            'Every solution must be a complete executable program with an input-reading and output-printing entry point, '
+            'even when it also defines a function. stdin contains only plain input data, never Python calls or assertions; '
+            'there is no injected function-test harness. State the same input/output format in the prompt and public examples. '
             'Keep hints and all grading rules in the private key. Questions must be solvable from original evidence and prerequisites.',
             {'fixed_curriculum': focused_blueprint(blueprint, obj), 'original_evidence': evidence_for(packets, obj)})
         kind = obj.get('check_kind', 'mcq')

@@ -14,7 +14,7 @@ from server.database import (Assessment, Asset, Attempt, Block, Curriculum, Job,
     LearningSession, Lesson, Source, SourceVersion)
 from server.ingestion.readers import text_blocks
 from server.lessons.authoring import StructuredAuthor
-from server.lessons.contracts import BlockDraft, Contract, CurriculumPlan, GradingKey, Verification, digest
+from server.lessons.contracts import BlockDraft, Contract, CurriculumPlan, GradingKey, PlannedAssessment, Verification, digest
 from server.providers.base import GenerationError
 from server.runtime import run_command
 
@@ -56,46 +56,74 @@ def validate_questions(plan, packets, author, runner, context):
     from server.lessons.planning import evidence_for, focused_blueprint
     blueprint = plan.public_blueprint()
     objectives = {x['id']: x for x in blueprint['objectives']}
-    for number, assessment in enumerate(plan.assessments):
-        if assessment.question.kind == "python" and hasattr(runner, "run") and assessment.key.reference_solution:
-            # Models miscompute expected outputs by hand. Like a contest setter, take them from
-            # the verified reference instead; a crashing reference still blocks below.
-            for case in assessment.key.tests:
-                ok, output = runner.run(assessment.key.reference_solution, case.stdin)
-                if ok and output.strip():
-                    case.expected = output.strip()[:16000]
-        key, question = assessment.key.model_dump(), assessment.question.model_dump()
-        objective = objectives[assessment.objective_id]
-        relevant = evidence_for(packets, objective)
-        inputs = {"question": question, "key": key, "evidence": relevant, "verifier": author.settings.verifier_model}
-        if context.saved(f"assessment_valid_{number}", inputs):
-            continue
-        verification = author.ask(f"assessment_verify_{number}", author.settings.verifier_model, Verification,
-            "Verify this assessment and private key against the ORIGINAL evidence. Check solvability, exact key correctness, "
-            "essential tests, hidden edge cases, reference outputs, misconceptions, hints and whether the lesson can teach the task. "
-            "Return critical findings for incorrect or ambiguous keys. Do not accept unsourced content.",
-            {"assessment": assessment.model_dump(), "original_evidence": relevant, "fixed_curriculum": focused_blueprint(blueprint, objective)})
-        if not verification.accepted() and not getattr(author.settings, "local", False):
-            raise GenerationError("ASSESSMENT_NEEDS_REVIEW", "An assessment or its key has unresolved verification findings.")
-        if question["kind"] == "python":
-            local = getattr(author.settings, "local", False)
-            if not local and (not key["alternative_solution"] or len(key["known_wrong_solutions"]) < 2):
-                raise GenerationError("ASSESSMENT_NEEDS_REVIEW", "Python validation requires alternative correct code and at least two known wrong solutions.")
-            # Local profile: the reference must pass; wrong solutions are checked when supplied.
-            correct = [key["reference_solution"]] + ([key["alternative_solution"]] if key["alternative_solution"] and not local else [])
-            for index, code in enumerate([*correct, *key["known_wrong_solutions"]]):
-                run_inputs = {"code": code, "key": key}
-                if author.settings.demo_runner:
-                    run_inputs["runtime"] = author.settings.runner_cache_key
-                saved = context.saved(f"reference_{number}_{index}", run_inputs)
-                tokens = saved.get("tokens") if saved else None
-                if not tokens:
-                    tokens = runner.submit(code, key)
-                    context.save(f"reference_{number}_{index}", run_inputs, {"tokens": tokens})
-                result = wait_runner(runner, tokens, key, context)
-                if result["passed"] != (index < len(correct)) and (not local or index < len(correct)):
-                    raise GenerationError("ASSESSMENT_NEEDS_REVIEW", "The Python test set failed a reference or accepted a known incorrect solution.")
-        context.save(f"assessment_valid_{number}", inputs, {"accepted": True, "verification": verification.model_dump()})
+    for number, original in enumerate(plan.assessments):
+        assessment = original
+        for repair in range(3):
+            failure = validate_question(assessment, number, repair, blueprint, objectives, packets, author, runner, context)
+            if failure is None:
+                plan.assessments[number] = assessment
+                break
+            if repair == 2:
+                raise GenerationError("ASSESSMENT_NEEDS_REVIEW",
+                    "A generated Python checkpoint still fails its answer checks after two repairs. No invalid checkpoint was released.",
+                    "Review the generated question or retry preparation after correcting its source material.")
+            assessment = author.ask(f"assessment_repair_{number}_{repair + 1}", author.settings.text_model, PlannedAssessment,
+                "Repair this Python checkpoint using the original evidence and executable validation findings. "
+                "Keep its exact objective_id, variant and python kind. All reference, alternative and known-wrong solutions "
+                "must be complete Python 3 programs reading plain data from stdin and printing results to stdout. "
+                "A function definition alone is not executable output. Never put calls, assertions or Python code in stdin; "
+                "stdin is input data, not a test harness. Make the prompt, starter code, public examples, tests and solutions "
+                "agree on one precise input/output format. Preserve the objective's difficulty and meaningful edge cases. "
+                "Do not merely change expected outputs to match a broken solution or weaken tests to pass it.",
+                {"assessment": assessment.model_dump(), "validation_findings": failure,
+                 "original_evidence": evidence_for(packets, objectives[original.objective_id]),
+                 "fixed_curriculum": focused_blueprint(blueprint, objectives[original.objective_id])})
+            if (assessment.objective_id != original.objective_id or assessment.variant != original.variant
+                    or assessment.question.kind != "python"):
+                raise GenerationError("INVALID_ASSESSMENT_SCOPE", "Checkpoint repair changed its objective, variant or question kind.")
+
+
+def validate_question(assessment, number, repair, blueprint, objectives, packets, author, runner, context):
+    from server.lessons.planning import evidence_for, focused_blueprint
+    key, question = assessment.key.model_dump(), assessment.question.model_dump()
+    objective = objectives[assessment.objective_id]
+    relevant = evidence_for(packets, objective)
+    inputs = {"question": question, "key": key, "evidence": relevant, "verifier": author.settings.verifier_model,
+              "validation_version": 2}
+    if question["kind"] == "python" and author.settings.demo_runner:
+        inputs["runtime"] = author.settings.runner_cache_key
+    if context.saved(f"assessment_valid_{number}", inputs):
+        return None
+    verification = author.ask(f"assessment_verify_{number}_{repair}", author.settings.verifier_model, Verification,
+        "Verify this assessment and private key against the ORIGINAL evidence. Check solvability, exact key correctness, "
+        "essential tests, hidden edge cases, reference outputs, misconceptions, hints and whether the lesson can teach the task. "
+        "Return critical findings for incorrect or ambiguous keys. Do not accept unsourced content.",
+        {"assessment": assessment.model_dump(), "original_evidence": relevant, "fixed_curriculum": focused_blueprint(blueprint, objective)})
+    if not verification.accepted() and not getattr(author.settings, "local", False):
+        raise GenerationError("ASSESSMENT_NEEDS_REVIEW", "An assessment or its key has unresolved verification findings.")
+    if question["kind"] == "python":
+        local = getattr(author.settings, "local", False)
+        if not local and (not key["alternative_solution"] or len(key["known_wrong_solutions"]) < 2):
+            raise GenerationError("ASSESSMENT_NEEDS_REVIEW", "Python validation requires alternative correct code and at least two known wrong solutions.")
+        # References must pass every case, not just the learner's 80% threshold.
+        correct = [key["reference_solution"]] + ([key["alternative_solution"]] if key["alternative_solution"] else [])
+        for index, code in enumerate([*correct, *key["known_wrong_solutions"]]):
+            run_inputs = {"code": code, "key": key}
+            if author.settings.demo_runner:
+                run_inputs["runtime"] = author.settings.runner_cache_key
+            saved = context.saved(f"reference_{number}_{index}", run_inputs)
+            tokens = saved.get("tokens") if saved else None
+            if not tokens:
+                tokens = runner.submit(code, key)
+                context.save(f"reference_{number}_{index}", run_inputs, {"tokens": tokens})
+            result = wait_runner(runner, tokens, key, context)
+            is_correct = index < len(correct)
+            if (is_correct and (not result["passed"] or result["score"] < 1)) or (not is_correct and result["passed"]):
+                return {"solution": "reference" if index == 0 else "alternative" if is_correct else "known_wrong",
+                        "reason": "Did not pass every test" if is_correct else "Was incorrectly accepted by the tests",
+                        "failed_categories": result.get("failed_categories", [])}
+    context.save(f"assessment_valid_{number}", inputs, {"accepted": True, "verification": verification.model_dump()})
+    return None
 
 
 def prepare_curriculum(context, settings, objects, runner, payload, folder):

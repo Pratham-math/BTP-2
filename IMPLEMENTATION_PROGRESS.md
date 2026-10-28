@@ -127,6 +127,11 @@ issues, is in [PROJECT_ANALYSIS_2026-10-27.md](PROJECT_ANALYSIS_2026-10-27.md).
 
 ## Verification
 
+Checkpoint validation follow-up: full backend regression run passed 216 tests;
+the final expanded executable-repair suite passed all 8 tests. The generation
+worker has loaded the fix; the failed job needs Retry in the app. See the latest
+checkpoint in [PLATFORM_STATUS.md](PLATFORM_STATUS.md).
+
 GPU narration follow-up: 210 backend tests passed. Added explicit Piper CUDA selection, safe missing-runtime
 errors, actual-session verification and an offline inference checker. The local
 setting requests CUDA, but installation is pending the user; no downloads were

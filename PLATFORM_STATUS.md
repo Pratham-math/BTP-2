@@ -1,5 +1,17 @@
 # Complete-platform status
 
+> Python checkpoint validation fix, 28 October 2026: the observed failed lesson
+> contained a function-only reference and function calls in stdin, incompatible
+> with the runner's complete-program contract. Preparation now performs up to two
+> bounded repairs, re-verifies/re-tests the repaired private checkpoint and preserves
+> objective/variant/kind. References and supplied alternatives must pass all tests;
+> accepted known-wrong programs trigger repair. Expected answers are no longer
+> overwritten from generated reference output. The full backend run passed **216
+> tests**; the final expanded repair suite passed **8 tests**, including the exact
+> function/stdin mismatch and infrastructure-error propagation. The idle generation
+> worker was restarted. The failed live job was not automatically retried; no live
+> model repair or teaching-quality acceptance is claimed. Frontend was unchanged.
+
 > GPU narration update, 28 October 2026: Piper supports explicit CPU/CUDA
 > selection, CUDA/cuDNN DLL preloading and verification of the actual voice
 > session. CUDA mode rejects silent CPU fallback. All **210 backend tests**

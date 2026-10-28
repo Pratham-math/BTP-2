@@ -30,6 +30,17 @@ Updated: 28 October 2026. The current review and open issues are in
 
 ## Current implementation
 
+Python checkpoint preparation now repairs failed executable checks up to twice
+instead of reusing the same invalid question forever. The reproduced failure
+was a function-only reference with Python function calls placed in stdin, while
+the runner executes complete stdin/stdout programs. Planning/repair instructions
+now state that contract explicitly. References and supplied alternatives must
+pass every test; known-wrong programs must be rejected. Validation no longer
+rewrites expected outputs from reference execution. Successful repaired questions
+replace the private plan item before persistence, with resumable stage inputs
+and objective/variant/kind checks. No live model-quality claim follows from the
+fixture tests, and existing failed jobs still need Retry in the app.
+
 Piper narration supports explicit `PIPER_DEVICE=cpu|cuda`. The user requested
 GPU support without downloads on 28 October. Local `.env` now selects CUDA;
 the installed ONNX Runtime is CPU-only, so narration is blocked with an
