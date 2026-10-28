@@ -141,3 +141,13 @@ def test_exact_output_accepts_print_newline_on_windows(monkeypatch):
     runner = demo_runner()
     assert runner.poll(runner.submit("print(input().split()[-1])", key), key)["passed"]
     assert not matches("9 \n", "9", "exact")
+
+
+def test_trace_question_must_include_the_program_it_asks_about():
+    from pydantic import ValidationError
+    item = {"objective_id": "a", "variant": "base", "question": {"kind": "trace", "prompt": "What does this program print?"},
+            "key": {"expected_output": "11.0", "hints": ["Substitute x."], "explanation": "5 + 1.5 * 4 = 11.0"}}
+    with pytest.raises(ValidationError, match="starter_code"):
+        PlannedAssessment.model_validate(item)
+    item["question"]["starter_code"] = "print(5 + 1.5 * 4)"
+    assert PlannedAssessment.model_validate(item).question.starter_code

@@ -288,6 +288,25 @@ def fallback_access(session_id: str, request: Request, db: DB, user: User):
     block = ready_for_objective(db, session.curriculum_id, session.objective_id, profile="recap")
     if not block:
         raise HTTPException(409, "A relevant recap is not ready. You can save and return later.")
+    return block_clips(db, request, block)
+
+
+@router.get("/sessions/{session_id}/review/{objective_id}")
+def review_access(session_id: str, objective_id: str, request: Request, db: DB, user: User):
+    """Replay an objective already reached; read-only, the session's route and progress are untouched."""
+    session = locked_session(db, user, session_id)
+    objectives = [x["id"] for x in db.get(Curriculum, session.curriculum_id).blueprint["objectives"]]
+    current = objectives.index(session.objective_id) if session.objective_id in objectives else len(objectives) - 1
+    if objective_id not in objectives or objectives.index(objective_id) > current:
+        raise HTTPException(404, "Reach this part of the lesson before reviewing it.")
+    adapted = session.evidence.get(objective_id, {}).get("adapted_hash")
+    block = (adapted and ready_for_objective(db, session.curriculum_id, objective_id, profile="adapted", context_hash=adapted))         or ready_for_objective(db, session.curriculum_id, objective_id)
+    if not block:
+        raise HTTPException(409, "This part is not ready to replay yet.")
+    return block_clips(db, request, block)
+
+
+def block_clips(db, request, block):
     scenes = (block.script or {}).get("scenes", [])
     captions = {x.position: x for x in db.scalars(select(Asset).where(Asset.block_id == block.id, Asset.kind == "caption"))}
     return {"block_id": block.id, "clips": [{"id": x.id, "url": request.app.state.objects.sign(x.object_key), "mime": x.mime, "duration": x.duration,

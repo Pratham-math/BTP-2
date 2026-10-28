@@ -68,6 +68,9 @@ def validate_questions(plan, packets, author, runner, context):
                     "A generated Python checkpoint still fails its answer checks after two repairs. No invalid checkpoint was released.",
                     "Review the generated question or retry preparation after correcting its source material.")
             assessment = author.ask(f"assessment_repair_{number}_{repair + 1}", author.settings.text_model, PlannedAssessment,
+                ("Repair this trace checkpoint: question.starter_code must be a complete deterministic Python 3 program that needs no "
+                 "input and runs without errors; the learner predicts what it prints. Keep its exact objective_id, variant and trace kind. "
+                 if original.question.kind == "trace" else "") +
                 "Repair this Python checkpoint using the original evidence and executable validation findings. "
                 "Keep its exact objective_id, variant and python kind. All reference, alternative and known-wrong solutions "
                 "must be complete Python 3 programs reading plain data from stdin and printing results to stdout. "
@@ -79,7 +82,7 @@ def validate_questions(plan, packets, author, runner, context):
                  "original_evidence": evidence_for(packets, objectives[original.objective_id]),
                  "fixed_curriculum": focused_blueprint(blueprint, objectives[original.objective_id])})
             if (assessment.objective_id != original.objective_id or assessment.variant != original.variant
-                    or assessment.question.kind != "python"):
+                    or assessment.question.kind != original.question.kind):
                 raise GenerationError("INVALID_ASSESSMENT_SCOPE", "Checkpoint repair changed its objective, variant or question kind.")
 
 
@@ -90,7 +93,7 @@ def validate_question(assessment, number, repair, blueprint, objectives, packets
     relevant = evidence_for(packets, objective)
     inputs = {"question": question, "key": key, "evidence": relevant, "verifier": author.settings.verifier_model,
               "validation_version": 2}
-    if question["kind"] == "python" and author.settings.demo_runner:
+    if question["kind"] in {"python", "trace"} and author.settings.demo_runner:
         inputs["runtime"] = author.settings.runner_cache_key
     if context.saved(f"assessment_valid_{number}", inputs):
         return None
@@ -101,6 +104,12 @@ def validate_question(assessment, number, repair, blueprint, objectives, packets
         {"assessment": assessment.model_dump(), "original_evidence": relevant, "fixed_curriculum": focused_blueprint(blueprint, objective)})
     if not verification.accepted() and not getattr(author.settings, "local", False):
         raise GenerationError("ASSESSMENT_NEEDS_REVIEW", "An assessment or its key has unresolved verification findings.")
+    if question["kind"] == "trace" and author.settings.demo_runner and hasattr(runner, "run"):
+        # The answer key is what the shown program really prints, not the model's mental arithmetic.
+        ok, output = runner.run(question["starter_code"], "")
+        if not ok:
+            return {"solution": "starter_code", "reason": "The program shown to the learner failed to run", "output": output[-2000:]}
+        assessment.key.expected_output = output.rstrip()[:16000]
     if question["kind"] == "python":
         local = getattr(author.settings, "local", False)
         if not local and (not key["alternative_solution"] or len(key["known_wrong_solutions"]) < 2):

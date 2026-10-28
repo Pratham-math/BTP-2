@@ -59,7 +59,8 @@ class Question(Contract):
     kind: Literal["mcq", "multiple", "trace", "python", "short"]
     prompt: str = Field(min_length=10, max_length=5000)
     options: list[Option] = Field(default_factory=list, max_length=12)
-    starter_code: str = Field(default="", max_length=12000)
+    starter_code: str = Field(default="", max_length=12000, description=
+        "trace: REQUIRED complete Python 3 program the learner reads (shown under the prompt); python: optional starter template")
     public_examples: list[dict[str, str]] = Field(default_factory=list, max_length=5)
 
 
@@ -126,6 +127,8 @@ class PlannedAssessment(Contract):
             raise ValueError("Short-answer questions require a model answer and 1-6 rubric points")
         if q.kind == "python" and (not k.tests or not k.reference_solution):
             raise ValueError("Python tasks require test cases and a reference solution")
+        if q.kind == "trace" and not q.starter_code.strip():
+            raise ValueError("Trace tasks must put the complete program to read in question.starter_code")
         if q.kind == "trace" and not k.expected_output:
             raise ValueError("Trace tasks require an expected output")
         return self

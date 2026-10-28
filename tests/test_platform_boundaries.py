@@ -137,7 +137,7 @@ def test_repaired_curriculum_cannot_drop_coverage_or_introduce_a_cycle():
     obj = {"id": "a", "title": "A concept", "description": "Explain the concept fully", "prerequisites": ["a"],
            "evidence": [{"source_version_id": str(uuid4()), "block_id": "source-1"}],
            "worked_example": "A complete worked example", "visual_approach": "Code trace"}
-    q = {"objective_id": "a", "variant": "base", "question": {"kind": "trace", "prompt": "Predict the output of this example."},
+    q = {"objective_id": "a", "variant": "base", "question": {"kind": "trace", "prompt": "Predict the output of this example.", "starter_code": "print(1)"},
          "key": {"expected_output": "1", "hints": ["Follow the trace"], "explanation": "The loop runs exactly one time."}}
     with pytest.raises(ValidationError, match="Prerequisites"):
         CurriculumPlan.model_validate({"title": "Full lesson", "scope": "A fully sourced scope", "objectives": [obj], "assessments": [q, {**q, "variant": "equivalent"}]})

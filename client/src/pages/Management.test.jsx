@@ -50,7 +50,7 @@ it('keeps the lesson and confirmation dialog visible when deletion fails', async
 
 it('deletes the lesson ID rather than its curriculum version ID on a detail page', async () => {
   mocks.api.mockResolvedValue({ deleted: true })
-  render(<LessonOptions lesson={{ id: 'version-1', lesson_id: 'lesson-1', title: 'Version fixture' }} />)
+  render(<MemoryRouter><LessonOptions lesson={{ id: 'version-1', lesson_id: 'lesson-1', title: 'Version fixture' }} /></MemoryRouter>)
   fireEvent.click(screen.getByLabelText('Options for Version fixture'))
   fireEvent.click(screen.getByRole('button', { name: 'Delete lesson Version fixture' }))
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete lesson' }))
@@ -118,4 +118,14 @@ it('teachers can revoke rejoining for a learner who left without forcibly restor
   fireEvent.click(await screen.findByRole('button', { name: 'Revoke rejoining' }))
   fireEvent.click(screen.getByRole('button', { name: 'Confirm revoke' }))
   await waitFor(() => expect(mocks.api).toHaveBeenCalledWith('/api/courses/c1/members/m1?active=false', { method: 'PATCH' }))
+})
+
+it('regenerates the lesson from its saved inputs without asking for them again', async () => {
+  mocks.post.mockResolvedValue({ id: 'lesson-2', job_id: 'job-9' })
+  render(<MemoryRouter><Routes><Route path="/" element={<LessonOptions lesson={{ id: 'version-1', lesson_id: 'lesson-1', title: 'Version fixture' }} />} /><Route path="/jobs/:id" element={<p>Job route</p>} /></Routes></MemoryRouter>)
+  fireEvent.click(screen.getByLabelText('Options for Version fixture'))
+  fireEvent.click(screen.getByRole('button', { name: 'Regenerate lesson Version fixture' }))
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Regenerate lesson' }))
+  await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/api/lessons/lesson-1/regenerate'))
+  expect(await screen.findByText('Job route')).toBeTruthy()
 })

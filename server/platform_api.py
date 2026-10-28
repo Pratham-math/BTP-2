@@ -534,6 +534,26 @@ def prepare_remaining(curriculum_id: str, request: Request, db: DB, user: User):
     return {"job_id": job.id}
 
 
+@router.post("/lessons/{lesson_id}/regenerate", status_code=202)
+def regenerate_lesson(lesson_id: str, request: Request, db: DB, user: User):
+    """A new lesson from the same sources, title and goal. Stage caches are per job, so this is a fresh generation."""
+    lesson = lesson_access(db, user, lesson_id, edit=True)
+    original = db.scalar(select(Job).where(Job.kind.in_(["quick_lesson", "curriculum"]),
+        Job.payload["lesson_id"].as_string() == lesson.id).order_by(Job.created_at).limit(1))
+    if not original:
+        raise HTTPException(409, "This lesson's original inputs were not found. Create it again from New lesson.")
+    settings = request.app.state.settings
+    copy = Lesson(owner_id=lesson.owner_id, course_id=lesson.course_id, title=lesson.title)
+    db.add(copy)
+    db.flush()
+    payload = {**original.payload, "lesson_id": copy.id}
+    if original.kind == "curriculum":
+        payload.update(text_model=settings.text_model, verifier_model=settings.verifier_model)
+    job = enqueue(db, settings, user.id, original.kind, payload, scope=f"private:{user.id}")
+    audit(db, user, "lesson_regenerated", copy.id)
+    return {"id": copy.id, "job_id": job.id, "state": "preparing"}
+
+
 @router.delete('/lessons/{lesson_id}')
 @router.post("/lessons/{lesson_id}/retire")
 def retire_lesson(lesson_id: str, db: DB, user: User):

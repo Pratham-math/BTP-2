@@ -158,6 +158,8 @@ def prepare_plan(author, inventory, packets, goal, *, batch_limit=24000):
             task + 'Create exactly one base and one fresh equivalent checkpoint for the fixed objective. Do not change its ID, scope or prerequisites. '
             'Choose the question kind that best tests this objective, and use the same kind for both variants: '
             'mcq (one correct option, 3-5 options, plausible distractors mapped in misconception_map) for recognising concepts; '
+            'For trace, put the complete short Python 3 program (no input, deterministic, under 15 lines) in question.starter_code; '
+            'the learner sees it under the prompt, so the prompt must not repeat it, and key.expected_output is exactly what it prints. '
             'multiple (several correct options) for properties/classification; trace (predict the exact printed output) for reading code; '
             'python (write a Python 3 stdin/stdout program; reference and all solutions must be Python 3, the only language the grader runs) '
             'only when the objective is about implementing code; if the material teaches another language, use trace or short instead; '

@@ -50,7 +50,7 @@ class FixtureAuthor:
         elif contract is AssessmentPair:
             obj = data['fixed_curriculum']['objective']
             result = contract(assessments=[{'objective_id': obj['id'], 'variant': variant,
-                'question': {'kind': 'trace', 'prompt': 'Predict this controlled fixture output.'},
+                'question': {'kind': 'trace', 'prompt': 'Predict this controlled fixture output.', 'starter_code': 'print(1)'},
                 'key': {'expected_output': '5', 'hints': ['Follow the fixed values.'],
                     'explanation': 'The two fixed values sum to five.'}} for variant in ('base', 'equivalent')])
         else:
