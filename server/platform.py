@@ -51,7 +51,7 @@ def create_app(settings=None, *, engine=None, verify_token=None, objects=None, r
     @app.middleware("http")
     async def headers(request: Request, call_next):
         # A tunnel or reverse proxy (ngrok, Cloudflare) connects from loopback but adds forwarding headers.
-        forwarded = any(h in request.headers for h in ("x-forwarded-for", "forwarded", "cf-connecting-ip"))
+        forwarded = not settings.tunnel_demo_python and any(h in request.headers for h in ("x-forwarded-for", "forwarded", "cf-connecting-ip"))
         if settings.demo_runner and (forwarded or not request.client or request.client.host not in {"127.0.0.1", "::1"}):
             return JSONResponse({"detail": "Local-demo Python is available only from this laptop's loopback address."}, status_code=403)
         # Cross-origin reads of authenticated data are governed by CORS. State

@@ -1,0 +1,296 @@
+TINKER LEARNING STUDIO - PROJECT OVERVIEW
+=========================================
+Written 28 October 2026. Plain-language guide to what this project is, how it
+works, how it is run and deployed, and what is still open.
+
+For deeper detail see: PROJECT_CONTEXT.md (decisions), PLATFORM_STATUS.md
+(what is proven / missing), LOCAL_PLATFORM.md (running on one laptop),
+Tinker_Complete_Platform_Implementation_Plan.md (the full specification).
+
+
+1. WHAT THE PROJECT IS
+----------------------
+Tinker turns a topic, notes, a PDF/slides, an image or a YouTube video into a
+complete, personal learning path:
+
+  * short narrated "video" lessons (animated scenes + voice + captions),
+  * a checkpoint question after each lesson block,
+  * automatic grading (multiple choice, "predict the output", short written
+    answers, and Python coding questions),
+  * lessons that adapt to how the learner is doing,
+  * saved progress you can resume any time.
+
+Two ways to use it:
+  * Independent study - a private workspace; only you see your lessons.
+  * Classrooms - a teacher reviews and approves an exact lesson version,
+    publishes it to a class, and sees student progress. Private independent
+    work is never visible to teachers.
+
+
+2. BIG PICTURE: THE PIECES
+--------------------------
+
+  Browser (React UI)
+      |  HTTPS (JSON API + media files)
+      v
+  FastAPI server  (server/platform.py, server/platform_api.py, server/learning/api.py)
+      |  reads/writes
+      v
+  PostgreSQL database  (lessons, sessions, progress, jobs queue, cached stages)
+      ^
+      |  workers claim jobs from the "jobs" table
+  Background workers  (python -m server.worker)
+      |-- generation workers: plan lessons, write scripts, make narration, check code
+      |-- grading worker:     grade learner answers
+      |
+      +--> AI text model:   Gemini (cloud)  OR  Ollama qwen3:4b (on this laptop)
+      +--> Voice:           Piper (on this laptop, offline)
+      +--> Python runner:   LocalRunner (on this laptop, NOT sandboxed)
+      +--> File storage:    data/objects (local) or cloud object storage
+
+  Why a database queue? Making a lesson takes minutes. The web server only
+  puts a "job" in the jobs table and returns at once. Workers pick jobs up,
+  save each finished stage (stage_results table), and if anything crashes the
+  job resumes from the last saved stage instead of starting over.
+
+
+3. FOLDER MAP
+-------------
+  client/                React + Vite frontend
+    src/App.jsx            routes / page shell
+    src/pages/             Independent study, Classroom, Sources, Account pages
+    src/player/Player.jsx  the lesson player (scenes, checkpoints, code editor)
+    src/remotion/          ScenePlayer - plays animated scenes with narration
+    src/platform/api.js    all calls to the backend (+ tunnel/media handling)
+    src/platform.css       layout incl. phone styles
+    public/.htaccess       makes deep links work on Hostinger/Apache
+
+  server/                FastAPI backend + workers
+    platform.py            app setup, CORS, security headers, loopback guard
+    platform_api.py        lessons, sources, classrooms, jobs, reviews API
+    learning/service.py    learning session logic, scheduling of blocks
+    learning/adaptation.py "how well is the learner doing" score -> teaching level
+    lessons/planning.py    curriculum: objectives + checkpoint questions
+    lessons/authoring.py   prompts to the AI model, retries, style rules
+    lessons/contracts.py   strict data shapes the AI output must match
+    lessons/production.py  narration audio, timing, captions, ffmpeg
+    visuals.py             allowed scene visuals (bullets, array, code_trace ...)
+    assessment/            grading, runner, code-trace checking
+    ingestion/             reading notes, PDFs, images, YouTube, Wikipedia
+    providers/             Gemini, Ollama, Piper adapters
+    worker/                job queue, job handlers (tasks.py), worker main
+    local_services.py      laptop-only pieces: local login, files, Python runner
+
+  migrations/            SQL schema for PostgreSQL
+  scripts/               start-local.ps1, stop-local.ps1, checks.ps1, helpers
+  tests/                 pytest backend tests
+  .env                   YOUR secrets and settings (git-ignored, never share)
+  .local/                portable PostgreSQL, Ollama, models, voices, test account
+  .run/                  running process ids and logs (.run/logs)
+
+
+4. HOW A LESSON IS MADE (STEP BY STEP)
+--------------------------------------
+When you press "Create a lesson":
+
+  1. Source reading      - your notes / document / image / YouTube / topic.
+                           A bare topic searches Wikipedia (with spelling
+                           suggestions, e.g. "bianry search" -> binary search).
+  2. Audit + inventory   - the AI summarises the material into sections.
+  3. Scope + objectives  - 3 to 6 ordered learning objectives, each with a
+                           question type (mcq, multiple, trace, python, short).
+  4. Checkpoints         - for every objective: a base question and a fresh
+                           "equivalent" question for retries, with a private
+                           answer key, hints and misconception notes.
+                           Python questions are run against their reference
+                           and wrong solutions to prove the tests work.
+  5. Teaching block      - for each objective: 4 to 6 scenes, each with 3-8
+                           spoken sentences and one visual (bullets, table,
+                           array walk-through, equation, diagram, plot or a
+                           code trace). A verifier model checks it; up to 2
+                           repairs. Code traces are actually executed and the
+                           real variable values replace guessed ones.
+  6. Narration           - Piper turns each sentence into speech; timings
+                           drive when each visual step appears; captions made.
+  7. Ready               - the block becomes playable in the player.
+
+Every stage result is cached. Retrying a failed job reuses finished stages.
+
+
+5. HOW BLOCKS ARE SCHEDULED (THE "3 AHEAD" RULE)
+------------------------------------------------
+Goal: the learner never waits long, even with slow local models.
+
+  * At creation: blocks 1, 2 and 3 are queued together.
+  * After the learner answers checkpoint k (first attempt), block k+3 is
+    queued as an ADAPTED block, written for this learner:
+       supportive  - smaller examples, more steps (when struggling)
+       balanced    - normal
+       challenge   - richer examples, less repetition (when acing it)
+    The score uses first-attempt results, attempts, hints used and whether
+    the solution was shown (server/learning/adaptation.py).
+  * Wrong answer -> a short recap block + the equivalent question.
+    3 wrong attempts -> solution shown, marked "needs revision".
+
+  PARALLEL WORK (changed 28 Oct): previously only ONE generation worker ran,
+  so blocks were made one after another. Now scripts/start-local.ps1 starts
+  several generation workers (3 with Gemini, 2 with Ollama; override with
+  PLATFORM_GENERATION_WORKERS). Each has its own lock slot; the queue hands
+  each worker a different job safely. With Ollama the GPU still answers one
+  prompt at a time, but narration and rendering overlap with it.
+
+
+6. LANGUAGE STYLE OF LESSONS (changed 28 Oct)
+---------------------------------------------
+Learners found the narration and questions stiff ("according to the provided
+text..."). server/lessons/authoring.py now has two rule sets sent with every
+request:
+  * SPOKEN_STYLE   - friendly tutor, short everyday sentences, explain jargon,
+                     written to be read aloud ("x squared", not "x^2"), never
+                     mention "the source/text", no filler words.
+  * QUESTION_STYLE - like a teacher in class: one clear self-contained
+                     question, test understanding with small examples, no
+                     trick questions / "all of the above", wrong options are
+                     real learner mistakes, hints nudge without answering.
+Only NEW lessons get this; old lessons keep their old wording.
+
+
+7. AI MODELS AND VOICE
+----------------------
+Chosen in .env (never put keys anywhere else):
+  PLATFORM_TEXT_PROVIDER    gemini  or  ollama        (currently gemini)
+  PLATFORM_TEXT_MODEL       e.g. gemini-3.5-flash-lite / qwen3:4b-q4_K_M
+  PLATFORM_VERIFIER_MODEL   model that checks the lessons
+  PLATFORM_SPEECH_PROVIDER  piper (voice en_US-lessac-medium, offline)
+
+Gemini: fast, needs internet and the API key (rotate it - it was once pasted
+in chat). Ollama: fully offline but slow on this laptop (RTX 3050 4 GB, the
+4B model partly spills onto the CPU). Image/YouTube reading uses Gemini.
+
+
+8. RUNNING IT ON THE LAPTOP
+---------------------------
+  Start:  powershell -File scripts/start-local.ps1
+  Stop:   powershell -File scripts/stop-local.ps1
+  Open:   http://127.0.0.1:8000
+
+Start runs: PostgreSQL (port 5433, database btp2), Ollama (only if selected),
+the API on port 8000 (also serves the built UI from client/dist), the
+generation workers and the grading worker. Logs: .run/logs/*.log.
+Settings in .env are read only at start - restart after changing .env.
+
+Local login: accounts are created on the login page ("Create an account").
+A test account is stored in .local/test-account.txt.
+
+Checks (run before pushing):
+  .venv\Scripts\python -m pytest -q          (backend, 218 tests)
+  cd client && npm test && npm run build     (frontend, 46 tests)
+
+
+9. PUBLIC DEPLOYMENT: HOSTINGER + NGROK
+---------------------------------------
+Plan: the website tinker.maharshinahar.in shows ONLY the user interface;
+all real work (database, AI, voice, Python, files) happens on this laptop,
+reached through the ngrok tunnel https://blunt-good-oxygen.ngrok-free.dev.
+
+  Phone/PC browser
+     |  loads the page files from Hostinger (static HTML/JS/CSS only)
+     |  then talks directly to the ngrok address for every API call/media file
+     v
+  ngrok tunnel  -->  this laptop, port 8000
+
+What Hostinger needs:
+  * NO Node.js, NO PHP, NO env file. Just static files.
+  * Create subdomain "tinker" in hPanel, upload client/tinker-upload.zip
+    into its folder and extract (index.html and .htaccess at the top level),
+    turn on SSL (must be https).
+
+How the zip is built (the ngrok address is baked in at build time):
+  cd client
+  VITE_API_BASE_URL=https://blunt-good-oxygen.ngrok-free.dev npx vite build --outDir dist-tinker
+  then zip the contents of dist-tinker  ->  tinker-upload.zip
+  If the ngrok address ever changes, rebuild and re-upload.
+
+What the laptop needs (.env, already done):
+  PLATFORM_ORIGINS must include https://tinker.maharshinahar.in and the
+  ngrok address, otherwise the browser is refused (CORS / "origin not allowed").
+
+ngrok free-tier detail: ngrok shows a warning page to browsers. The app sends
+the "ngrok-skip-browser-warning" header on every request, and downloads
+audio/video/images with that header then plays them from memory (blob URLs),
+because <audio>/<video> tags cannot send headers.
+
+Phone support: inputs are 16px (no iPhone zoom), all nav links visible,
+44px touch targets, no sideways scrolling. Checked at 375px width.
+
+The laptop must stay on, awake and running ngrok + the platform for the site
+to work.
+
+
+10. SECURITY - READ THIS
+------------------------
+Python code runs on THIS LAPTOP in a normal process (time limit, keys hidden,
+but NOT sandboxed - it could read files or use the network). Python runs in two
+places:
+  a) while making lessons (checking code examples and reference answers),
+  b) when a learner submits an answer to a coding question.
+
+On a public site anyone who signs up could submit harmful code. Protection
+added 28 Oct: requests arriving through a tunnel/proxy (they carry
+X-Forwarded-For) are treated as remote. If demo Python is ON
+(PLATFORM_LOCAL_DEMO_PYTHON=true), remote requests are refused with 403.
+
+  DECISION (28 Oct): all Python, including website users' answers, runs on
+  the ngrok laptop. The owner turns this on explicitly in that laptop's .env:
+     PLATFORM_LOCAL_DEMO_PYTHON=true
+     PLATFORM_TUNNEL_DEMO_PYTHON=true
+  Without the second line, website requests get blocked and the browser shows
+  "Failed to fetch". Only share the site with people you trust: their code
+  can read files on that laptop.
+
+Other rules followed throughout:
+  * Gemini key, answer keys, tokens and storage credentials stay on the server
+    (.env), never in frontend code, logs or Hostinger.
+  * Errors must be honest "what to fix" messages, never fake success.
+
+
+11. COMMON MESSAGES AND WHAT THEY MEAN
+--------------------------------------
+  "No reference article matched this topic"  - Wikipedia found nothing; add
+                                               notes or a document instead.
+  "A preparation service failed"             - an AI/voice/ffmpeg step broke;
+                                               check .run/logs, then Retry.
+                                               Finished stages are kept.
+  ASSESSMENT_NEEDS_REVIEW / TRACE_NEEDS_REVIEW
+                                             - a question or code example
+                                               failed its checks after repairs.
+  RUNNER_NOT_VERIFIED                        - Python is needed but demo Python
+                                               is off.
+  PROVIDER_BUSY / KEY_REJECTED               - Gemini rate limit / bad key.
+  403 "origin not allowed"                   - add the site to PLATFORM_ORIGINS.
+
+Useful fixes done earlier: Piper file-name bug (all narration failed), Gemini
+schema rejection (400), Windows line endings breaking exact output grading,
+ffmpeg 8 number format, video restarting every 5 seconds in the player.
+
+
+12. TIMELINE OF RECENT WORK
+--------------------------
+  26 Oct  End-to-end local run; many pipeline fixes (see WORK_REPORT_2026-10-26.md)
+  27 Oct  Switched text model to Gemini; fixed schema, assessments, traces,
+          narration, playback. Pushed to main (3bc1da5).
+  28 Oct  Teammate commits: "Almost completed final project" (20b7db0) and
+          "lesson generation fix" (02b1d0a).
+  28 Oct  Our commit 8a29b95: Hostinger+ngrok support, phone layout, tunnel
+          security guard, parallel generation workers, plain-language prompts.
+
+
+13. WHAT IS STILL OPEN
+----------------------
+  * Decide how Python is handled for the public site (section 10).
+  * Restart the platform so the new code and .env take effect, then do one
+    full lesson run on a phone through tinker.maharshinahar.in.
+  * Generate one new lesson to judge the new language style.
+  * Rotate the Gemini API key.
+  * Not done for a real release (see PLATFORM_STATUS.md): isolated Python
+    runner, production storage, multi-account acceptance, human lesson review.

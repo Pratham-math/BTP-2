@@ -22,6 +22,8 @@ class PlatformSettings:
     runner_language_id: int = 0
     runner_verified: bool = False
     local_demo_python: bool = False
+    # Owner's explicit choice: tunnel users' Python runs on this laptop (not sandboxed).
+    tunnel_demo_python: bool = False
     text_model: str = ""
     verifier_model: str = ""
     vision_model: str = ""
@@ -63,6 +65,7 @@ class PlatformSettings:
             runner_language_id=int(os.getenv("JUDGE0_PYTHON_LANGUAGE_ID", "0") or "0"),
             runner_verified=os.getenv("JUDGE0_ISOLATION_VERIFIED", "false").lower() == "true",
             local_demo_python=os.getenv("PLATFORM_LOCAL_DEMO_PYTHON", "false").lower() == "true",
+            tunnel_demo_python=os.getenv("PLATFORM_TUNNEL_DEMO_PYTHON", "false").lower() == "true",
             text_model=os.getenv("PLATFORM_TEXT_MODEL", ""), verifier_model=os.getenv("PLATFORM_VERIFIER_MODEL", ""),
             vision_model=os.getenv("PLATFORM_VISION_MODEL", ""),
             google_oauth_verified=os.getenv("GOOGLE_OAUTH_VERIFIED", "false").lower() == "true",
