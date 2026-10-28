@@ -146,6 +146,9 @@ def test_complete_multiobjective_journey_and_no_answer_key_leak(platform):
     assert session["question"] is None
     assert "correct" not in str(client.get(f"/api/lessons/versions/{curriculum}", headers=headers("alice")).json())
     for index in range(5):
+        if session['state'] == 'waiting_for_block':
+            complete_adaptive_fixture(factory, session)
+            session = client.get(f"/api/sessions/{session['id']}", headers=headers('alice')).json()
         assert session["objective_id"] == f"o{index}"
         session = finish_clip(client, session)
         assert "private" not in session["question"] and "correct" not in session["question"]
@@ -156,6 +159,23 @@ def test_complete_multiobjective_journey_and_no_answer_key_leak(platform):
     assert session["state"] == "complete"
     assert len(session["evidence"]) == 5
     assert all(x["status"] == "passed" and x["viewed"] for x in session["evidence"].values())
+
+
+def complete_adaptive_fixture(factory, session):
+    """Attach a clearly synthetic teaching variant for a protocol-only journey."""
+    with factory.begin() as db:
+        job = db.get(Job, session['continuation_job_id'])
+        payload = job.payload
+        normal = db.scalar(select(Block).where(Block.curriculum_id == payload['curriculum_id'],
+            Block.objective_id == payload['objective_id'], Block.profile == 'normal'))
+        block = Block(curriculum_id=normal.curriculum_id, objective_id=normal.objective_id, profile='adapted',
+            context_hash=payload['context_hash'], state='ready', script=normal.script,
+            verification={'accepted': True, 'fixture_only': True, 'adaptation': payload['adaptation']}, checksum='f' * 64)
+        db.add(block); db.flush()
+        for asset in db.scalars(select(Asset).where(Asset.block_id == normal.id)).all():
+            db.add(Asset(block_id=block.id, position=asset.position, kind=asset.kind, object_key=f'fixture/{block.id}/{asset.kind}',
+                checksum='f' * 64, duration=asset.duration, mime=asset.mime, transcript='Synthetic adaptive protocol fixture.'))
+        job.state, job.result = 'completed', {'block_id': block.id}
 
 
 def test_duplicate_submission_is_one_grade_and_stale_progress_is_rejected(platform):

@@ -8,6 +8,7 @@ from sqlalchemy import and_, func, or_, select, text
 from server.database import Job, StageResult
 from server.lessons.contracts import digest
 from server.providers.base import GenerationError
+from server.worker.estimates import timing_profile, workload
 
 
 def admission_lock(db):
@@ -22,7 +23,8 @@ def enqueue(db, settings, owner_id, kind, payload, *, scope, priority=2, consume
         identity["providers"] = {"author": settings.text_model, "verifier": settings.verifier_model,
             "text_provider": os.getenv("PLATFORM_TEXT_PROVIDER", "gemini"), "speech_provider": os.getenv("PLATFORM_SPEECH_PROVIDER", "gemini"),
             "speech_model": os.getenv("PLATFORM_SPEECH_MODEL", ""), "voice": os.getenv("GEMINI_VOICE", "Kore"),
-            "piper_voice": os.getenv("PIPER_VOICE", ""), "template": "platform-author-v2", "renderer": "platform-manim-v2"}
+            "piper_voice": os.getenv("PIPER_VOICE", ""), "piper_device": os.getenv("PIPER_DEVICE", "cpu"),
+            "template": "platform-author-v2", "renderer": "platform-manim-v2"}
     key = digest(identity)
     previous = db.scalar(select(Job).where(Job.dedup_key == key).with_for_update())
     if previous:
@@ -79,6 +81,9 @@ def claim(factory, *, prefer_oldest=False, lease_seconds=90, queue="all", owner_
         job = db.scalar(query.with_for_update(skip_locked=True).limit(1))
         if job is None:
             return None
+        previous_timing = job.result.get('_timing', {})
+        job.result = {**job.result, '_timing': {'started_at': now, 'profile': timing_profile(),
+            'units': workload(db, job), 'clean_run': not previous_timing and job.failures == 0 and job.stage == 'queued'}}
         job.state, job.fence, job.lease_until, job.updated_at = "running", job.fence + 1, now + lease_seconds, now
         db.flush()
         return {"id": job.id, "fence": job.fence, "kind": job.kind, "payload": job.payload, "owner_id": job.owner_id}
@@ -119,5 +124,8 @@ class JobContext:
 
     def finish(self, result, state="completed", error_code=None):
         with self.transaction() as (_, job):
-            job.state, job.result, job.error_code = state, result, error_code
+            timing = job.result.get('_timing', {})
+            if timing:
+                timing = {**timing, 'run_seconds': max(0, time.time() - timing['started_at'])}
+            job.state, job.result, job.error_code = state, {**result, **({'_timing': timing} if timing else {})}, error_code
             job.lease_until, job.updated_at = None, time.time()

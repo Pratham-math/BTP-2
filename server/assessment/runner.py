@@ -12,6 +12,13 @@ def encoded(text):
     return base64.b64encode(text.encode()).decode("ascii")
 
 
+def configured_runner(settings):
+    if settings.demo_runner:
+        from server.local_services import LocalRunner
+        return LocalRunner(settings)
+    return JudgeRunner(settings)
+
+
 class JudgeRunner:
     def __init__(self, settings):
         self.settings = settings

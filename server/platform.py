@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm.exc import StaleDataError
 
 from server.auth import SupabaseVerifier
-from server.assessment.runner import JudgeRunner
+from server.assessment.runner import configured_runner
 from server.config import PROJECT_DIR
 from server.database import Profile, make_engine, session_factory
 from server.object_store import ObjectStore
@@ -33,15 +33,15 @@ def create_app(settings=None, *, engine=None, verify_token=None, objects=None, r
         if engine:
             engine.dispose()
 
-    app = FastAPI(title="BTP2 Teaching Platform", version="3.0.0", lifespan=lifespan)
+    app = FastAPI(title="Tinker Teaching Platform", version="3.0.0", lifespan=lifespan)
     app.state.settings, app.state.engine = settings, engine
     app.state.db = session_factory(engine) if engine else None
     if settings.local:
-        from server.local_services import LocalObjectStore, LocalRunner, verify_local_token
-        verify_token, objects, runner = verify_token or verify_local_token, objects or LocalObjectStore(), runner or LocalRunner()
+        from server.local_services import LocalObjectStore, verify_local_token
+        verify_token, objects = verify_token or verify_local_token, objects or LocalObjectStore()
     app.state.verify_token = verify_token or SupabaseVerifier(settings)
     app.state.objects = objects or ObjectStore(settings)
-    app.state.runner = runner or JudgeRunner(settings)
+    app.state.runner = runner or configured_runner(settings)
     app.state.limiter = UserLimiter()
     app.add_middleware(BodyLimit, max_upload=settings.max_upload_bytes)
     app.add_middleware(CORSMiddleware, allow_origins=list(settings.origins), allow_credentials=False,
@@ -50,6 +50,8 @@ def create_app(settings=None, *, engine=None, verify_token=None, objects=None, r
 
     @app.middleware("http")
     async def headers(request: Request, call_next):
+        if settings.demo_runner and (not request.client or request.client.host not in {"127.0.0.1", "::1"}):
+            return JSONResponse({"detail": "Local-demo Python is available only from this laptop's loopback address."}, status_code=403)
         # Cross-origin reads of authenticated data are governed by CORS. State
         # changes also reject unexpected browser origins explicitly.
         origin = request.headers.get("origin")
@@ -91,7 +93,7 @@ def create_app(settings=None, *, engine=None, verify_token=None, objects=None, r
 
     @app.get("/api/health")
     def health():
-        return {"ok": True, "service": "btp2-platform"}
+        return {"ok": True, "service": "tinker-platform"}
 
     @app.get("/api/ready")
     def readiness():
@@ -103,6 +105,8 @@ def create_app(settings=None, *, engine=None, verify_token=None, objects=None, r
             except SQLAlchemyError:
                 checks["database"] = False
         return JSONResponse({"ready": all(checks.values()), "checks": checks,
+                             "runner_mode": "local_demo" if settings.demo_runner else "judge0",
+                             "runner_isolated": not settings.demo_runner and checks["python_runner"],
                              "scope": "configuration-and-database-only; not release acceptance"}, status_code=200 if all(checks.values()) else 503)
 
     @app.get("/api/config")
@@ -112,7 +116,9 @@ def create_app(settings=None, *, engine=None, verify_token=None, objects=None, r
                 "google_oauth_verified": settings.google_oauth_verified,
                 "source_features": settings.source_features(),
                 "setup_required": [key for key, ready in settings.checks().items() if not ready],
-                "python_enabled": settings.checks()["python_runner"]}
+                "python_enabled": settings.checks()["python_runner"],
+                "runner_mode": "local_demo" if settings.demo_runner else "judge0",
+                "runner_isolated": not settings.demo_runner and settings.checks()["python_runner"]}
 
     from server.platform_api import router as resources
     from server import erasure  # Register account/maintenance routes before inclusion.

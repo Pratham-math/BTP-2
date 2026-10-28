@@ -33,7 +33,7 @@ class ArticleText(HTMLParser):
 
 def wikipedia_evidence(topic, *, limit=40000):
     api = "https://en.wikipedia.org/w/api.php"
-    headers = {"User-Agent": "BTP2-Learning-Studio/1.0 (https://github.com/Pratham-math/BTP-2; college project)"}
+    headers = {"User-Agent": "Tinker-Learning-Studio/1.0 (https://github.com/Pratham-math/BTP-2; college project)"}
     with httpx.Client(timeout=30, follow_redirects=False, headers=headers) as client:
         found = client.get(api, params={"action": "query", "list": "search", "srsearch": topic, "srlimit": 1, "format": "json"})
         found.raise_for_status()

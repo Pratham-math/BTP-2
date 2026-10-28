@@ -5,11 +5,16 @@ configuration is not release acceptance. Track both in PLATFORM_STATUS.md.
 
 ## Current workspace
 
+The current build additionally requires `migrations/005_classroom_management.sql`
+on its target database for stable enrollment codes and voluntary departures.
+It has been applied to local PostgreSQL; the previously provisioned remote
+Supabase project has not been migrated by this local-demo update.
+
 For guided remaining-service setup, start with [SERVICE_SETUP.md](SERVICE_SETUP.md).
 The user's chosen existing account now has an audited administrator grant.
 Free-only operation is still required; no separate runner server is available.
 
-- Supabase project **BTP2**, ref `psemolfpnygfbngkjtuk`, in Mumbai, was created
+- Existing Supabase project (legacy name **BTP2**), ref `psemolfpnygfbngkjtuk`, in Mumbai, was created
   with explicit permission after Supabase quoted $0. No paid upgrade was made.
 - Migrations 001–004 are applied. The restricted `btp2_app` login is saved only
   in ignored `.env`. Its temporary bootstrap credential table was removed.
@@ -75,7 +80,7 @@ not accept a shared HS256 JWT secret.
 
 ## Google sign-in — first manual setup
 
-Open [the BTP2 dashboard](https://supabase.com/dashboard/project/psemolfpnygfbngkjtuk).
+Open [the Tinker dashboard](https://supabase.com/dashboard/project/psemolfpnygfbngkjtuk).
 Following [Supabase's Google guide](https://supabase.com/docs/guides/auth/social-login/auth-google):
 
 1. In your Google Cloud project, configure the consent application's audience
@@ -124,6 +129,19 @@ Ollama/Piper text-based lessons; follow the two routes in
 [SERVICE_SETUP.md](SERVICE_SETUP.md). For Gemini, set `GEMINI_API_KEY` locally.
 Benchmark candidate models against the same sourced CSE examples before
 pinning `PLATFORM_TEXT_MODEL` and `PLATFORM_VERIFIER_MODEL`.
+
+For YouTube extraction, add a public video in the Source library, inspect its
+timestamped derived notes against the video, clear corrected uncertainty flags,
+then confirm and choose **Use in a lesson**. The adapter uses Gemini, even when
+text lessons use Ollama. Set the server-only `GEMINI_API_KEY` and optionally
+`PLATFORM_VISION_MODEL`; the extraction model otherwise defaults to
+`PLATFORM_TEXT_MODEL` only when the text provider is Gemini. Local mode exposes
+YouTube when these are configured. Production additionally requires
+`PLATFORM_ENABLE_YOUTUBE_SOURCES=true` after acceptance. Videos longer than one
+hour require explicit transcript batches. Inaccessible videos require a permitted
+transcript or source file. No automatic provider switch or paid service setup is
+performed. Implementation follows the
+[Gemini video-input documentation](https://ai.google.dev/gemini-api/docs/video-understanding).
 No author/verifier is selected by default and no live quality benchmark passed.
 
 For cloud speech, set `PLATFORM_SPEECH_PROVIDER=gemini` and pin
@@ -147,11 +165,16 @@ There is no silent switch to another provider after a failure.
 The rolling 24-hour call limit includes platform text calls and cloud speech
 attempts. `MAX_JOBS_PER_USER` and `MAX_QUEUED_JOBS` bound admission. Provider
 charges/quotas and rendering capacity still need account-specific measurement.
-One-step lookahead is separately controlled by `PLATFORM_SPECULATION_ENABLED`
-(false by default). Disable it and restart the API to stop new speculation;
-ready content, selected continuations and grading remain separate.
+Independent study now uses the explicitly requested three-block rolling pipeline:
+blocks 1–3 are normal and assessment k queues adapted block k+3. This committed
+preparation is separate from the legacy optional `PLATFORM_SPECULATION_ENABLED`
+flag; the flag does not disable the requested rolling pipeline. Admission and
+model-call limits still apply. See LOCAL_PLATFORM.md for the metric and timing.
 
 ## Isolated Python runner
+
+Follow [PYTHON_RUNNER_SETUP.md](PYTHON_RUNNER_SETUP.md) for the installation,
+environment variables, read-only checker and actual-host isolation acceptance.
 
 Set `JUDGE0_URL`, `JUDGE0_TOKEN`, and the actual host's Python language ID in
 `JUDGE0_PYTHON_LANGUAGE_ID`. Do not assume an ID from another provider. The host

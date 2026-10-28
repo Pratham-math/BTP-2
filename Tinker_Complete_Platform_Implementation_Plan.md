@@ -1,8 +1,8 @@
-# BTP2 Teaching Platform Implementation Plan — College Project Revision
+# Tinker Teaching Platform Implementation Plan — College Project Revision
 
 Prepared on 22 October 2026. All delivery dates use India Standard Time.
 
-This plan takes BTP2 from its existing prompt-to-video engine to an English-language CSE learning platform with independent study, teacher-managed classrooms, complete lessons, scheduled assessments, Python practice, and persistent progress. It specifies implementation work and release evidence. It does not represent implemented changes or a deployment.
+This plan takes Tinker from its existing prompt-to-video engine to an English-language CSE learning platform with independent study, teacher-managed classrooms, complete lessons, scheduled assessments, Python practice, and persistent progress. It specifies implementation work and release evidence. It does not represent implemented changes or a deployment.
 
 **Recommended design:** retain React, FastAPI, the provider adapters, and the Manim/FFmpeg engine. Add Supabase authentication and PostgreSQL, one durable generation worker, private object storage, a clip-based lesson player, and isolated Python execution. Plan the whole curriculum first. In Independent Study, generate the first teaching block and its checkpoint support, prepare one likely continuation ahead, and adapt subsequent blocks from assessment evidence. Reuse validated clips whenever possible. Classroom sessions select from fully teacher-approved content; novel generated content requires a new review before classroom use.
 
@@ -637,7 +637,7 @@ The completion criterion is a deployed service where an authorized user can supp
 
 External service behavior checked on 22 October 2026. Prices, quotas, and preview availability can change; verify them in the team's actual accounts before committing costs. Architecture choices, estimates, targets, and acceptance thresholds above are recommendations, not vendor guarantees.
 
-- **R1 Repository baseline:** [BTP2 at reviewed commit](https://github.com/Pratham-math/BTP-2/tree/de85cf1cec7554852d77c4f33d29bc05c3b38f31). Code inspected includes `server/script.py`, `server/main.py`, `server/generator.py`, `server/visuals.py`, providers, storage, runtime, renderer, client and test inventory.
+- **R1 Repository baseline:** [Tinker at reviewed commit](https://github.com/Pratham-math/BTP-2/tree/de85cf1cec7554852d77c4f33d29bc05c3b38f31). Code inspected includes `server/script.py`, `server/main.py`, `server/generator.py`, `server/visuals.py`, providers, storage, runtime, renderer, client and test inventory.
 - **R2 Historical implementation evidence:** [IMPLEMENTATION_PROGRESS.md](https://github.com/Pratham-math/BTP-2/blob/de85cf1cec7554852d77c4f33d29bc05c3b38f31/IMPLEMENTATION_PROGRESS.md).
 - **R3 Content-quality findings:** [CONTENT_REVIEW.md](https://github.com/Pratham-math/BTP-2/blob/de85cf1cec7554852d77c4f33d29bc05c3b38f31/CONTENT_REVIEW.md).
 - **R4 Workflow patterns:** [Anthropic Building effective agents](https://www.anthropic.com/research/building-effective-agents).

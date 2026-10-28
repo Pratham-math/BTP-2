@@ -85,6 +85,8 @@ def validate_questions(plan, packets, author, runner, context):
             correct = [key["reference_solution"]] + ([key["alternative_solution"]] if key["alternative_solution"] and not local else [])
             for index, code in enumerate([*correct, *key["known_wrong_solutions"]]):
                 run_inputs = {"code": code, "key": key}
+                if author.settings.demo_runner:
+                    run_inputs["runtime"] = author.settings.runner_cache_key
                 saved = context.saved(f"reference_{number}_{index}", run_inputs)
                 tokens = saved.get("tokens") if saved else None
                 if not tokens:
@@ -173,11 +175,12 @@ def prepare_block(context, settings, objects, runner, payload, folder, *, includ
             return failed
         if not manual_script:
             draft, verification = author.author(blueprint, objective, packets, payload["profile"], payload.get("misconception"),
-                                                payload.get("performance"), trace_check=failed_traces)
+                                                payload.get("performance"), trace_check=failed_traces,
+                                                adaptation=payload.get('adaptation'))
         for scene in draft.scenes:
             if scene.visual.kind == "code_trace":
                 harness, key = trace_harness(scene.visual), trace_key()
-                inputs = {"visual": scene.visual.model_dump(), "runtime": settings.runner_language_id}
+                inputs = {"visual": scene.visual.model_dump(), "runtime": settings.runner_cache_key}
                 checked = context.saved("example_trace_" + scene.id, inputs)
                 if not checked or not checked.get("accepted"):
                     saved_run = context.saved("example_run_" + scene.id, inputs)
@@ -186,13 +189,15 @@ def prepare_block(context, settings, objects, runner, payload, folder, *, includ
                         context.save("example_run_" + scene.id, inputs, {"tokens": tokens})
                     result = wait_runner(runner, tokens, key, context)
                     if not result["passed"]:
-                        raise GenerationError("TRACE_NEEDS_REVIEW", "The pictured code states do not match execution in the isolated runner.")
+                        raise GenerationError("TRACE_NEEDS_REVIEW", "The pictured code states do not match execution in the configured Python runner.")
                     context.save("example_trace_" + scene.id, inputs, {"accepted": True})
         with context.transaction() as (db, _):
             block = db.get(Block, block_id)
             if digest(block.script) != original_script_hash:
                 raise GenerationError("DRAFT_CHANGED", "An author changed this block during generation. The edit was preserved.")
             block.script, block.verification, block.state = draft.model_dump(), {"accepted": True, "manual_edit": bool(manual_script), **verification.model_dump()}, "rendering"
+            if payload.get('adaptation'):
+                block.verification = {**block.verification, 'adaptation': payload['adaptation']}
         assets = produce_block(draft, folder / block_id, context, objects, f"lessons/{payload['curriculum_id']}/{block_id}")
         with context.transaction() as (db, _):
             curriculum = db.scalar(select(Curriculum).where(Curriculum.id == payload["curriculum_id"]).with_for_update())
@@ -210,7 +215,7 @@ def prepare_block(context, settings, objects, runner, payload, folder, *, includ
             block.checksum, block.state = digest({"script": block.script, "assets": assets}), "ready"
             curriculum.manifest_revision += 1
     if include_support and payload["profile"] != "recap":
-        support_payload = {k: v for k, v in payload.items() if k != "manual_revision"}
+        support_payload = {k: v for k, v in payload.items() if k not in {'manual_revision', 'adaptation'}}
         prepare_block(context, settings, objects, runner, {**support_payload, "profile": "recap", "context_hash": "base", "misconception": None, "performance": None}, folder, include_support=False)
     with context.transaction() as (db, _):
         curriculum = db.get(Curriculum, payload["curriculum_id"])
@@ -227,7 +232,10 @@ def prepare_whole_lesson(context, settings, objects, runner, payload, folder):
         curriculum = db.get(Curriculum, payload["curriculum_id"])
         if not curriculum:
             raise GenerationError("INVALID_LESSON", "Lesson not found.")
-        ids = [x["id"] for x in curriculum.blueprint["objectives"]]
+        from server.learning.adaptation import LEAD
+        lesson = db.get(Lesson, curriculum.lesson_id)
+        objectives = curriculum.blueprint['objectives'] if lesson.course_id else curriculum.blueprint['objectives'][:LEAD]
+        ids = [x['id'] for x in objectives]
     for objective_id in ids:
         prepare_block(context, settings, objects, runner, {"curriculum_id": payload["curriculum_id"], "objective_id": objective_id,
             "profile": "normal", "context_hash": "base", "misconception": None}, folder)
@@ -270,7 +278,7 @@ def grade_attempt(context, settings, objects, runner, payload, folder):
             session = db.scalar(select(LearningSession).where(LearningSession.id == attempt.session_id).with_for_update())
             apply_grade(db, settings, session, attempt, result)
         return {"attempt_id": payload["attempt_id"]}
-    inputs = {"code": code, "key": key, "runtime": settings.runner_language_id}
+    inputs = {"code": code, "key": key, "runtime": settings.runner_cache_key}
     saved = context.saved("runner_tokens", inputs)
     tokens = saved["tokens"] if saved else runner.submit(code, key)
     if not saved:
@@ -390,6 +398,10 @@ def prepare_quick_lesson(context, settings, objects, runner, payload, folder):
         first = curriculum.blueprint["objectives"][0]["id"]
     prepare_block(context, settings, objects, runner, {"curriculum_id": result["curriculum_id"], "objective_id": first, "profile": "normal",
                                                       "context_hash": "base", "misconception": None, "performance": None}, folder)
+    from server.learning.service import enqueue_initial_window
+    with context.transaction() as (db, _):
+        curriculum = db.get(Curriculum, result['curriculum_id'])
+        enqueue_initial_window(db, settings, curriculum, db.get(Lesson, curriculum.lesson_id))
     return {"curriculum_id": result["curriculum_id"], "skipped_sections": skipped[:50]}
 
 

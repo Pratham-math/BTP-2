@@ -50,6 +50,7 @@ def request_erasure(body: ErasureConfirmation, db: DB, user: User):
         membership.active = False
     for course in db.scalars(select(Course).where(Course.owner_id == user.id)):
         course.enrollment_hash = None
+        course.enrollment_code, course.enrollment_enabled = None, False
     user.active, user.email, user.display_name, user.privilege = False, '', 'Deleted learner', 'student'
     # Maintenance is not optional model generation and must not be blocked by
     # the generation queue or cloud-call budget.

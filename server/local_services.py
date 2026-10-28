@@ -14,6 +14,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+from threading import Event, Thread
 
 import jwt
 from fastapi import HTTPException
@@ -129,7 +130,7 @@ class LocalObjectStore:
 # Runner --------------------------------------------------------------------
 
 def child_env():
-    # No secrets, keys or user environment reach learner code.
+    # Filter the inherited environment. This does not isolate filesystem access.
     env = {k: os.environ[k] for k in ("SYSTEMROOT", "WINDIR", "PATH") if k in os.environ}
     env.update(PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1", TEMP=str(LOCAL_TEMP), TMP=str(LOCAL_TEMP))
     return env
@@ -143,24 +144,63 @@ class LocalRunner:
     """
 
     def __init__(self, settings=None):
+        from server.platform_settings import PlatformSettings
+        self.settings = settings or PlatformSettings.from_env()
         self.results = {}
+        self.timeout_seconds = 5
 
     def ready(self):
-        if not is_local():
-            raise GenerationError("RUNNER_NOT_VERIFIED", "The local runner is only available in the local profile.")
+        if not self.settings.demo_runner:
+            raise GenerationError("RUNNER_NOT_VERIFIED", "Local Python requires the local profile and explicit PLATFORM_LOCAL_DEMO_PYTHON=true for trusted demo code.")
 
     def run(self, code, stdin):
+        self.ready()
+        if not isinstance(code, str) or not code.strip() or len(code) > 16000:
+            raise GenerationError("INVALID_CODE", "Submit between 1 and 16000 characters of Python code.")
+        from server.owned_process import close_owned_job, spawn_owned
+        from server.runtime import checkpoint, stop_process
         LOCAL_TEMP.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=LOCAL_TEMP) as folder:
             script = Path(folder) / "main.py"
             script.write_text(code, encoding="utf-8")
-            try:
-                done = subprocess.run([sys.executable, "-I", "-S", str(script)], input=stdin.encode(), cwd=folder, env=child_env(),
-                                      capture_output=True, timeout=5, **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
-            except subprocess.TimeoutExpired:
-                return False, ""
-            # Windows text-mode stdout writes \r\n; graders and keys use \n.
-            return done.returncode == 0, done.stdout[:65536].decode("utf-8", errors="replace").replace("\r\n", "\n")
+            output, overflow = bytearray(), Event()
+            def read(pipe, limit, target=None):
+                size = 0
+                try:
+                    while chunk := pipe.read(4096):
+                        size += len(chunk)
+                        if size > limit:
+                            overflow.set()
+                        elif target is not None:
+                            target.extend(chunk)
+                finally:
+                    pipe.close()
+            options = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+            with tempfile.TemporaryFile() as input_file:
+                input_file.write(stdin.encode()); input_file.seek(0)
+                process = spawn_owned([sys.executable, "-I", "-S", str(script)], stdin=input_file, cwd=folder,
+                    env=child_env() | {"TEMP": folder, "TMP": folder}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False, **options)
+                readers = [Thread(target=read, args=(process.stdout, 65536, output), daemon=True),
+                           Thread(target=read, args=(process.stderr, 8192), daemon=True)]
+                for reader in readers:
+                    reader.start()
+                deadline, timed_out = time.monotonic() + self.timeout_seconds, False
+                try:
+                    while process.poll() is None:
+                        checkpoint()
+                        if overflow.is_set() or time.monotonic() > deadline:
+                            timed_out = time.monotonic() > deadline
+                            stop_process(process)
+                            break
+                        time.sleep(.02)
+                finally:
+                    if process.poll() is None:
+                        stop_process(process)
+                    close_owned_job(process)
+                    for reader in readers:
+                        reader.join(timeout=2)
+                return (process.returncode == 0 and not timed_out and not overflow.is_set(),
+                        output.decode("utf-8", errors="replace").replace("\r\n", "\n"))
 
     def submit(self, code, key):
         self.ready()
@@ -174,12 +214,28 @@ class LocalRunner:
                              "category": case.category, "essential": case.essential, "weight": case.weight})
         token = uuid.uuid4().hex
         self.results[token] = outcomes
+        self.result_path(token).write_text(json.dumps(outcomes), encoding="utf-8")
         return [token] * len(grading.tests)
 
+    def result_path(self, token):
+        if not isinstance(token, str) or len(token) != 32 or any(c not in '0123456789abcdef' for c in token):
+            raise GenerationError("RUNNER_FAILED", "The local grading token is invalid.")
+        from server.runtime import CURRENT_CONTROL
+        control = CURRENT_CONTROL.get()
+        folder = (control.folder if control else LOCAL_TEMP) / 'demo-runner-results'
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder / (token + '.json')
+
     def poll(self, tokens, key):
+        self.ready()
+        if not tokens or len(tokens) != len(GradingKey.model_validate(key).tests):
+            raise GenerationError("RUNNER_FAILED", "The local runner test record is incomplete.")
         outcomes = self.results.get(tokens[0]) if tokens else None
-        if outcomes is None:  # Worker restarted between submit and poll: rerun is safe.
-            raise GenerationError("RUNNER_FAILED", "The grading result was lost. Retry grading.")
+        if outcomes is None:
+            try:
+                outcomes = json.loads(self.result_path(tokens[0]).read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                raise GenerationError("RUNNER_FAILED", "The local grading result is missing. Retry grading.") from None
         score = sum(x["weight"] for x in outcomes if x["passed"]) / sum(x["weight"] for x in outcomes)
         passed = score >= .8 and all(x["passed"] for x in outcomes if x["essential"])
         return {"passed": passed, "score": score, "feedback": "All required checks passed." if passed else "Some checks did not pass. Use a hint and review your code.",

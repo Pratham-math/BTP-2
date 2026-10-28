@@ -17,6 +17,7 @@ from server.database import (Assessment, Asset, Assignment, AuditEvent, Block, C
 from server.ingestion.readers import text_blocks, youtube_id
 from server.lessons.contracts import EvidenceBlock, digest
 from server.worker.queue import admission_lock, enqueue, requeue
+from server.worker.estimates import estimate, workload
 
 
 router = APIRouter(prefix="/api")
@@ -48,6 +49,10 @@ class Correction(Body):
     evidence: list[EvidenceBlock] = Field(min_length=1)
     confirm: bool
     note: str = Field(min_length=5, max_length=1000)
+
+
+class SourceTitle(Body):
+    title: str = Field(min_length=3, max_length=160)
 
 
 class LessonInput(Body):
@@ -95,6 +100,7 @@ def source_view(db, source):
     version = db.scalar(select(SourceVersion).where(SourceVersion.source_id == source.id, SourceVersion.number == source.current_version))
     return {"id": source.id, "title": source.title, "kind": source.kind, "state": source.state,
             "has_original": bool(source.object_key),
+            "original_url": "https://www.youtube.com/watch?v=" + youtube_id(source.metadata_json["input"]) if source.kind == "youtube" else None,
             "job_id": source.metadata_json.get("job_id"),
             "course_id": source.course_id, "version": source.current_version,
             "source_version_id": version.id if version else None, "evidence": version.evidence if version else [],
@@ -152,26 +158,48 @@ def courses(db: DB, user: User):
 def create_course(body: CourseInput, db: DB, user: User):
     if user.privilege not in {"teacher", "administrator"}:
         raise HTTPException(403, "A verified teacher must create this course.")
-    course = Course(owner_id=user.id, title=body.title)
+    code = secrets.token_urlsafe(12)
+    course = Course(owner_id=user.id, title=body.title, enrollment_code=code,
+                    enrollment_hash=hashlib.sha256(code.encode()).hexdigest(), enrollment_enabled=True)
     db.add(course)
     db.flush()
     audit(db, user, "course_created", course.id)
     return {"id": course.id, "title": course.title, "role": "teacher"}
 
 
-@router.post("/courses/{course_id}/enrollment-code")
-def rotate_code(course_id: str, db: DB, user: User):
-    course = own_course(db, user, course_id)
-    code = secrets.token_urlsafe(24)
-    course.enrollment_hash = hashlib.sha256(code.encode()).hexdigest()
-    audit(db, user, "enrollment_rotated", course.id)
-    return {"code": code}
+def teacher_course(db, user, course_id):
+    course = db.scalar(select(Course).where(Course.id == course_id, Course.owner_id == user.id).with_for_update())
+    if not course:
+        raise HTTPException(404, 'Course not found.')
+    return course
+
+
+def permanent_code(course):
+    if not course.enrollment_code:
+        course.enrollment_code = secrets.token_urlsafe(12)
+        # Preserve the last legacy hash-only invitation instead of invalidating it.
+        if not course.enrollment_hash:
+            course.enrollment_hash = hashlib.sha256(course.enrollment_code.encode()).hexdigest()
+    return {'code': course.enrollment_code, 'enabled': course.enrollment_enabled}
+
+
+@router.get('/courses/{course_id}/enrollment-code')
+def get_enrollment_code(course_id: str, db: DB, user: User):
+    return permanent_code(teacher_course(db, user, course_id))
+
+
+@router.post('/courses/{course_id}/enrollment-code')
+def enable_enrollment(course_id: str, db: DB, user: User):
+    course = teacher_course(db, user, course_id)
+    course.enrollment_enabled = True
+    audit(db, user, 'enrollment_enabled', course.id)
+    return permanent_code(course)
 
 
 @router.delete("/courses/{course_id}/enrollment-code")
 def revoke_code(course_id: str, db: DB, user: User):
-    course = own_course(db, user, course_id)
-    course.enrollment_hash = None
+    course = teacher_course(db, user, course_id)
+    course.enrollment_enabled = False
     audit(db, user, "enrollment_disabled", course.id)
     return {"revoked": True}
 
@@ -181,39 +209,69 @@ def join_course(body: JoinInput, db: DB, user: User):
     # Serialize admission so duplicate tabs cannot create duplicate membership.
     from server.worker.queue import admission_lock
     admission_lock(db)
-    course = db.scalar(select(Course).where(Course.enrollment_hash == hashlib.sha256(body.code.encode()).hexdigest()))
+    course = db.scalar(select(Course).where(Course.enrollment_enabled.is_(True),
+        or_(Course.enrollment_hash == hashlib.sha256(body.code.encode()).hexdigest(), Course.enrollment_code == body.code)).with_for_update())
     if not course:
-        raise HTTPException(404, "This enrollment code is invalid or has been revoked.")
-    membership = db.scalar(select(Membership).where(Membership.course_id == course.id, Membership.user_id == user.id))
+        raise HTTPException(404, "This enrollment code is invalid or enrollment is paused.")
+    if course.owner_id == user.id:
+        return {'id': course.id, 'title': course.title}
+    membership = db.scalar(select(Membership).where(Membership.course_id == course.id, Membership.user_id == user.id).with_for_update())
     if membership and not membership.active:
-        raise HTTPException(403, "A teacher must restore your revoked membership.")
+        if not membership.left_voluntarily:
+            raise HTTPException(403, "A teacher must restore your revoked membership.")
+        membership.active, membership.left_voluntarily = True, False
     if membership is None:
         db.add(Membership(course_id=course.id, user_id=user.id))
     return {"id": course.id, "title": course.title}
 
 
+@router.post('/courses/{course_id}/leave')
+def leave_course(course_id: str, db: DB, user: User):
+    course = db.get(Course, course_id)
+    if course and course.owner_id == user.id:
+        raise HTTPException(409, 'The teacher cannot leave their own classroom.')
+    membership = db.scalar(select(Membership).where(Membership.course_id == course_id,
+        Membership.user_id == user.id, Membership.active.is_(True)).with_for_update())
+    if not membership:
+        raise HTTPException(404, 'Active classroom membership not found.')
+    membership.active, membership.left_voluntarily = False, True
+    audit(db, user, 'classroom_left', course_id)
+    return {'left': True, 'retained': 'Assignment history is retained. You may rejoin with the permanent class code.'}
+
+
 @router.get("/courses/{course_id}/members")
 def members(course_id: str, db: DB, user: User):
     own_course(db, user, course_id)
-    return [{"id": x.id, "display_name": profile.display_name, "active": x.active}
+    return [{"id": x.id, "display_name": profile.display_name, "active": x.active, 'left_voluntarily': x.left_voluntarily}
             for x, profile in db.execute(select(Membership, Profile).join(Profile, Profile.id == Membership.user_id).where(Membership.course_id == course_id))]
 
 
 @router.patch("/courses/{course_id}/members/{membership_id}")
 def set_membership(course_id: str, membership_id: str, active: bool, db: DB, user: User):
     own_course(db, user, course_id)
-    membership = db.get(Membership, membership_id)
+    membership = db.scalar(select(Membership).where(Membership.id == membership_id, Membership.course_id == course_id).with_for_update())
     if not membership or membership.course_id != course_id:
         raise HTTPException(404, "Membership not found.")
-    membership.active = active
+    if active and membership.left_voluntarily:
+        raise HTTPException(409, 'This learner chose to leave. They can rejoin with the class code.')
+    membership.active, membership.left_voluntarily = active, False
     audit(db, user, "membership_changed", membership.id, active=active)
     return {"id": membership.id, "active": active}
 
 
 @router.get("/sources")
 def sources(db: DB, user: User):
-    return [{"id": x.id, "title": x.title, "kind": x.kind, "state": x.state} for x in
-            db.scalars(select(Source).where(Source.owner_id == user.id, Source.state != "retired").order_by(Source.created_at.desc()))]
+    rows = db.execute(select(Source, SourceVersion).outerjoin(SourceVersion,
+        (SourceVersion.source_id == Source.id) & (SourceVersion.number == Source.current_version))
+        .where(Source.owner_id == user.id, Source.state != "retired").order_by(Source.created_at.desc())).all()
+    job_ids = [source.metadata_json.get("job_id") for source, _ in rows if source.metadata_json.get("job_id")]
+    jobs = {job.id: job for job in db.scalars(select(Job).where(Job.id.in_(job_ids), Job.owner_id == user.id))} if job_ids else {}
+    return [{"id": source.id, "title": source.title, "kind": source.kind, "state": source.state,
+             "created_at": source.created_at, "version": source.current_version,
+             "block_count": len(version.evidence) if version else 0,
+             "unresolved_blocks": sum(bool(block.get("uncertainty")) for block in version.evidence) if version else 0,
+             "job_state": jobs[source.metadata_json["job_id"]].state if source.metadata_json.get("job_id") in jobs else None}
+            for source, version in rows]
 
 
 @router.post("/sources", status_code=201)
@@ -232,7 +290,7 @@ def create_source(body: SourceInput, request: Request, db: DB, user: User):
         source.current_version, source.state = 1, "needs_confirmation"
     else:
         if body.kind == "youtube":
-            youtube_id(body.text)
+            source.metadata_json = {"input": "https://www.youtube.com/watch?v=" + youtube_id(body.text)}
         job = enqueue(db, request.app.state.settings, user.id, "source", {"source_id": source.id}, scope=f"private:{user.id}")
         source.metadata_json = {**source.metadata_json, "job_id": job.id}
     db.flush()
@@ -273,6 +331,14 @@ def upload_source(request: Request, db: DB, user: User, file: UploadFile = File(
 @router.get("/sources/{source_id}")
 def get_source(source_id: str, db: DB, user: User):
     return source_view(db, source_access(db, user, source_id))
+
+
+@router.patch("/sources/{source_id}")
+def rename_source(source_id: str, body: SourceTitle, db: DB, user: User):
+    source = source_access(db, user, source_id)
+    source.title = body.title
+    audit(db, user, "source_renamed", source.id)
+    return source_view(db, source)
 
 
 @router.get("/sources/{source_id}/original")
@@ -320,7 +386,10 @@ def evidence_image(source_id: str, block_id: str, request: Request, db: DB, user
 def delete_source(source_id: str, request: Request, db: DB, user: User):
     source = source_access(db, user, source_id)
     versions = set(db.scalars(select(SourceVersion.id).where(SourceVersion.source_id == source.id)))
-    for curriculum in db.scalars(select(Curriculum).join(Lesson, Lesson.id == Curriculum.lesson_id).where(Lesson.owner_id == user.id, Lesson.retired.is_(False))):
+    for job in db.scalars(select(Job).where(Job.owner_id == user.id, Job.state.in_(["queued", "running", "waiting_for_input", "waiting_for_review"]))):
+        if source.id in job.payload.get("source_ids", []) or versions.intersection(job.payload.get("source_version_ids", [])):
+            raise HTTPException(409, "Cancel the lesson preparation using this source before removing it.")
+    for curriculum in db.scalars(select(Curriculum).join(Lesson, Lesson.id == Curriculum.lesson_id).where(Lesson.retired.is_(False))):
         if any(ref["source_version_id"] in versions for objective in curriculum.blueprint.get("objectives", []) for ref in objective["evidence"]):
             raise HTTPException(409, "Retire lessons using this source before deleting its original. Saved classroom records follow the retention policy.")
     if source.object_key:
@@ -430,7 +499,10 @@ def quick_lesson(request: Request, db: DB, user: User, prompt: str = Form(..., m
 
 @router.get("/lessons/versions/{curriculum_id}")
 def get_curriculum(curriculum_id: str, db: DB, user: User):
-    return curriculum_view(db, curriculum_access(db, user, curriculum_id))
+    curriculum = curriculum_access(db, user, curriculum_id)
+    lesson = db.get(Lesson, curriculum.lesson_id)
+    course = db.get(Course, lesson.course_id) if lesson.course_id else None
+    return {**curriculum_view(db, curriculum), 'can_manage': lesson.owner_id == user.id or bool(course and course.owner_id == user.id)}
 
 
 @router.post("/lessons/versions/{curriculum_id}/confirm", status_code=202)
@@ -446,6 +518,8 @@ def confirm_curriculum(curriculum_id: str, body: VersionConfirmation, request: R
     job = enqueue(db, request.app.state.settings, lesson.owner_id, "block",
         {"curriculum_id": curriculum.id, "objective_id": first, "profile": "normal", "context_hash": "base", "misconception": None},
         scope=f"private:{lesson.owner_id}:{curriculum.id}")
+    from server.learning.service import enqueue_initial_window
+    enqueue_initial_window(db, request.app.state.settings, curriculum, lesson)
     audit(db, user, "curriculum_confirmed", curriculum.id)
     return {"job_id": job.id, "curriculum_id": curriculum.id}
 
@@ -460,14 +534,28 @@ def prepare_remaining(curriculum_id: str, request: Request, db: DB, user: User):
     return {"job_id": job.id}
 
 
+@router.delete('/lessons/{lesson_id}')
 @router.post("/lessons/{lesson_id}/retire")
 def retire_lesson(lesson_id: str, db: DB, user: User):
     lesson = lesson_access(db, user, lesson_id, edit=True)
+    versions = list(db.scalars(select(Curriculum).where(Curriculum.lesson_id == lesson.id)))
+    version_ids = {version.id for version in versions}
+    attempt_ids = set(db.scalars(select(Attempt.id).join(LearningSession, LearningSession.id == Attempt.session_id)
+                               .where(LearningSession.curriculum_id.in_(version_ids))))
+    affected = or_(Job.payload['lesson_id'].as_string() == lesson.id,
+                   Job.payload['curriculum_id'].as_string().in_(version_ids),
+                   Job.payload['attempt_id'].as_string().in_(attempt_ids))
+    # Workers lock their job before their curriculum. NOWAIT avoids waiting on
+    # a busy worker while deleting a lesson; no data is removed on a failed lock.
+    for job in db.scalars(select(Job).where(affected).order_by(Job.id).with_for_update(nowait=True)):
+        if job.state != 'completed':
+            job.state, job.lease_until, job.fence = 'cancelled', None, job.fence + 1
+            job.updated_at = time.time()
     lesson.retired = True
-    for version in db.scalars(select(Curriculum).where(Curriculum.lesson_id == lesson.id)):
-        version.publication = "retired"
+    for version in versions:
+        version.publication, version.availability = 'retired', 'retired'
     audit(db, user, "lesson_retired", lesson.id)
-    return {"retired": True}
+    return {'deleted': True, 'retired': True, 'retained': 'Lesson records are archived; classroom assessment history is retained.'}
 
 
 @router.get("/reviews/{curriculum_id}")
@@ -572,14 +660,31 @@ def get_job(job_id: str, db: DB, user: User):
     job = db.get(Job, job_id)
     if not job or job.owner_id != user.id:
         raise HTTPException(404, "Preparation job not found.")
+    history = db.scalars(select(Job).where(Job.owner_id == user.id, Job.state == 'completed', Job.kind == job.kind)
+                         .order_by(Job.updated_at.desc()).limit(30)).all()
+    return job_view(db, job, history)
+
+
+def job_view(db, job, history):
+    lesson_id = job.payload.get('lesson_id')
+    curriculum = db.get(Curriculum, job.payload['curriculum_id']) if job.payload.get('curriculum_id') else None
+    if curriculum:
+        lesson_id = curriculum.lesson_id
+    lesson = db.get(Lesson, lesson_id) if lesson_id else None
     return {"id": job.id, "kind": job.kind, "state": job.state, "stage": job.stage,
-            "error_code": job.error_code, "result": job.result, "created_at": job.created_at, "updated_at": job.updated_at}
+            "error_code": job.error_code, "result": {k: v for k, v in job.result.items() if not k.startswith('_')},
+            "created_at": job.created_at, "updated_at": job.updated_at,
+            "lesson_id": lesson_id, "course_id": lesson.course_id if lesson else None,
+            'lesson_retired': bool(lesson and lesson.retired),
+            "title": lesson.title if lesson else None, "eta": estimate(job, history, units=workload(db, job))}
 
 
 @router.get("/jobs")
 def job_list(db: DB, user: User):
-    return [{"id": x.id, "kind": x.kind, "state": x.state, "stage": x.stage} for x in
-            db.scalars(select(Job).where(Job.owner_id == user.id).order_by(Job.created_at.desc()).limit(100))]
+    rows = db.scalars(select(Job).where(Job.owner_id == user.id).order_by(Job.created_at.desc()).limit(100)).all()
+    history = db.scalars(select(Job).where(Job.owner_id == user.id, Job.state == 'completed')
+                         .order_by(Job.updated_at.desc()).limit(100)).all()
+    return [packet for job in rows if not (packet := job_view(db, job, history))['lesson_retired']]
 
 
 @router.get("/reviews/{curriculum_id}/blocks/{block_id}/assets")
@@ -620,6 +725,8 @@ def retry_job(job_id: str, request: Request, db: DB, user: User):
         raise HTTPException(404, "Preparation job not found.")
     if job.state not in {"failed", "cancelled", "waiting_for_input", "waiting_for_review"}:
         raise HTTPException(409, "Only stopped jobs can be retried.")
+    if job_view(db, job, [])['lesson_retired']:
+        raise HTTPException(409, 'This lesson was deleted. Its preparation cannot be retried.')
     if job.kind == "grade":
         raise HTTPException(409, "Retry saved grading from its learning checkpoint.")
     requeue(db, request.app.state.settings, job)

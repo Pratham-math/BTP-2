@@ -1,7 +1,7 @@
 # Work report — 26 Oct 2026
 
 ## Goal
-Make the full BTP2 platform run locally (no cloud, nothing on C:), use Remotion
+Make the full Tinker platform run locally (no cloud, nothing on C:), use Remotion
 instead of Manim, have real assessments of varied types, longer lessons, and the
 adaptive rule: assessment *k* shapes lesson block *k+2*.
 

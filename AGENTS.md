@@ -1,13 +1,22 @@
 # Project working instructions
 
-Implement `BTP2_Complete_Platform_Implementation_Plan (1).md`. The user confirmed
+Implement `Tinker_Complete_Platform_Implementation_Plan.md`. The user confirmed
 on 22 October 2026 that it supersedes the old MVP-only restrictions. Keep React,
 FastAPI, provider adapters and the safe Manim/FFmpeg renderer. Add authenticated
 independent study and classrooms, source ingestion, versioned curricula,
 checkpoints, isolated Python grading, durable jobs and persistent progress.
 
+The user requested a three-block adaptive lead on 28 October 2026. Independent
+study prepares blocks 1–3 normally; assessment k schedules block k+3 in the
+background from a frozen, provisional understanding signal. Required objectives
+and assessment contracts stay fixed. Classroom routes remain teacher-reviewed.
+
 Keep answer keys, runner tokens, storage credentials and provider keys on the
-server. Learner code must run only on a separately isolated runner. Private
+server. Learner code must run only on a separately isolated runner, except for
+the user's 28 October 2026 laptop-only demo authorization: the explicit local
+profile plus `PLATFORM_LOCAL_DEMO_PYTHON=true` may execute trusted demo code in
+a local subprocess. It is not a secure sandbox or release isolation evidence;
+production retains the separate-runner requirement. Private
 independent work is never visible to course teachers. Classroom publication
 requires review of the exact immutable lesson version and all reachable assets.
 Never label development fixtures as generated or human-reviewed release content.

@@ -106,6 +106,9 @@ Following [Cloudflare's S3 setup](https://developers.cloudflare.com/r2/get-start
 
 ## 3. Python runner: blocked under the current resource choice
 
+Use [PYTHON_RUNNER_SETUP.md](PYTHON_RUNNER_SETUP.md) for the separate-host setup,
+exact environment variables, read-only configuration checker and isolation gates.
+
 The user chose free-only and has no separate Linux VM/server. Judge0's current
 [shared-cloud page](https://judge0.com/) advertises paid plans; no suitable free
 production allocation or isolated host has been established. Do not subscribe,

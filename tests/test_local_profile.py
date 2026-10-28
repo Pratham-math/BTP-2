@@ -1,4 +1,4 @@
-"""Local-profile adapters and the k+2 adaptive schedule."""
+"""Local-profile adapters and the three-block adaptive lead."""
 import pytest
 from sqlalchemy import select
 
@@ -6,7 +6,27 @@ from server.database import Job
 from server.lessons.contracts import PlannedAssessment
 from server.local_services import LocalObjectStore, LocalRunner, check_password, hash_password
 from server.visuals import VisualSpec
+from server.platform_settings import PlatformSettings
 from tests.test_platform import answer_body, finish_clip, headers, platform, seed_lesson, start  # noqa: F401
+
+
+def demo_runner():
+    return LocalRunner(PlatformSettings(profile='local', local_demo_python=True))
+
+
+def test_local_platform_does_not_enable_unisolated_python_runner():
+    from server.assessment.runner import JudgeRunner
+    from server.platform import create_app
+    from server.platform_settings import PlatformSettings
+    from server.providers.base import GenerationError
+
+    settings = PlatformSettings(profile="local")
+    app = create_app(settings)
+    assert not settings.checks()["python_runner"]
+    assert isinstance(app.state.runner, JudgeRunner)
+    with pytest.raises(GenerationError, match="separate isolated Python runner"):
+        app.state.runner.ready()
+    app.state.runner.close()
 
 
 def test_password_hash_round_trip():
@@ -17,7 +37,7 @@ def test_password_hash_round_trip():
 def test_local_runner_grades_stdin_programs(monkeypatch):
     monkeypatch.setenv("PLATFORM_PROFILE", "local")
     key = {"tests": [{"stdin": "2 3\n", "expected": "5", "category": "sum"}], "hints": ["Add them"], "explanation": "Read two ints and add."}
-    runner = LocalRunner()
+    runner = demo_runner()
     good = runner.poll(runner.submit("a, b = map(int, input().split())\nprint(a + b)", key), key)
     bad = runner.poll(runner.submit("print(0)", key), key)
     assert good["passed"] and not bad["passed"] and bad["failed_categories"] == ["sum"]
@@ -50,7 +70,7 @@ def test_new_visual_kinds_and_short_answer_contract():
         PlannedAssessment(objective_id="o0", variant="base", question=question, key={**key, "rubric": []})
 
 
-def test_first_assessment_prepares_adapted_block_two_objectives_ahead(platform):  # noqa: F811
+def test_first_assessment_prepares_adapted_fourth_block(platform):  # noqa: F811
     client, factory, ids = platform
     _, curriculum = seed_lesson(factory, ids, count=4)
     session = finish_clip(client, start(client, curriculum))
@@ -59,7 +79,7 @@ def test_first_assessment_prepares_adapted_block_two_objectives_ahead(platform):
     with factory() as db:
         jobs = db.scalars(select(Job).where(Job.kind == "block")).all()
     adapted = [x for x in jobs if x.payload["profile"] == "adapted"]
-    assert len(adapted) == 1 and adapted[0].payload["objective_id"] == "o2"
+    assert len(adapted) == 1 and adapted[0].payload["objective_id"] == "o3"
     assert adapted[0].payload["performance"][0]["first_attempt_passed"] is False
 
 
@@ -104,7 +124,7 @@ def test_code_trace_must_be_python():
 def test_measured_trace_replaces_hand_computed_values(monkeypatch):
     from server.assessment.trace_validation import measured_trace, trace_harness
     monkeypatch.setenv("PLATFORM_PROFILE", "local")
-    runner = LocalRunner()
+    runner = demo_runner()
     visual = VisualSpec(kind="code_trace", caption="Count the items that are at most the pivot.",
         code_lines=["A = [3, 1, 2, 6]", "i = 0", "for j in range(3):", "    if A[j] <= 6:", "        i += 1", "done = i"],
         trace=[{"line": 2, "variables": {"i": "0"}}, {"line": 6, "variables": {"i": "0", "done": "9"}, "array": ["9"], "array_name": "A"}])
@@ -118,6 +138,6 @@ def test_exact_output_accepts_print_newline_on_windows(monkeypatch):
     from server.assessment.grading import matches
     monkeypatch.setenv("PLATFORM_PROFILE", "local")
     key = {"tests": [{"stdin": "4 7 9", "expected": "9", "category": "last"}], "comparison": "exact", "hints": ["Use -1"], "explanation": "Index -1 is the last item."}
-    runner = LocalRunner()
+    runner = demo_runner()
     assert runner.poll(runner.submit("print(input().split()[-1])", key), key)["passed"]
     assert not matches("9 \n", "9", "exact")

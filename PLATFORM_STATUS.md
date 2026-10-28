@@ -1,7 +1,91 @@
 # Complete-platform status
 
+> GPU narration update, 28 October 2026: Piper supports explicit CPU/CUDA
+> selection, CUDA/cuDNN DLL preloading and verification of the actual voice
+> session. CUDA mode rejects silent CPU fallback. All **210 backend tests**
+> passed, including six GPU-path regressions. The local configuration now requests
+> CUDA, but the offline checker correctly reports CPU-only ONNX Runtime: manual
+> installation is pending. No dependencies or models were downloaded, and GPU
+> narration performance is not yet verified. See [LOCAL_GPU_SETUP.md](LOCAL_GPU_SETUP.md).
+> Frontend files were unchanged; the preceding 46-test/build evidence still applies.
+
+> Lesson/classroom management update, 28 October 2026: confirmed lesson deletion
+> removes lessons from active study and assignments while retaining classroom
+> history. Students can leave and voluntarily rejoin; teacher revocation still
+> blocks rejoining. Permanent enrollment codes are visible only to the owning
+> teacher in classroom Settings; pausing enrollment preserves the code. Lesson
+> actions are grouped in card menus, and classroom tabs separate lessons,
+> members, progress and settings. Checks passed: **204 backend tests, 46 frontend
+> tests, production build**. Migration 005 was applied and rerun successfully on
+> local PostgreSQL only. Interaction tests use disposable fixtures; no real
+> lessons or memberships were deleted for verification. Browser visual review
+> remains unavailable; production release gaps below remain open.
+
+> Adaptive-generation update, 28 October 2026: the old k+2 speculative route could
+> be cancelled during advancement or bypassed by a normal clip. Independent study
+> now keeps a three-block lead: normal blocks 1–3, assessment k → adapted block
+> k+3. A provisional, transparent learning signal drives scaffolding and example
+> complexity; queue admission retries during playback, snapshots prevent repeated
+> rendering on retakes, and classrooms remain reviewed-only. Core checks passed:
+> **198 backend tests, 39 frontend tests, production build**. These are synthetic
+> scheduling/provider fixtures and interaction tests, not a live teaching-quality,
+> adaptive-metric validity or zero-wait performance benchmark.
+
+> Branding update, 28 October 2026: the user selected **Tinker**. The app, browser
+> and API titles, favicon, client package metadata and project documentation now
+> use the new name. The implementation plan was renamed and references updated.
+> This pass reran all **37 frontend tests**, the API startup regression and the
+> production build successfully. The full 188-test backend result below belongs
+> to the preceding local-demo implementation checkpoint.
+
+> Local-demo Python update, 28 October 2026: the user authorized trusted Python
+> programs on this laptop without Judge0. The ignored local configuration enables
+> the explicit demo flag; production/default behavior remains on the separate
+> runner path. Correct/incorrect programs, timeout/output bounds, restart recovery,
+> loopback rejection and a worker-driven checkpoint passed. An actual configured
+> LocalRunner sample also passed. Core checks: **188 backend tests, 37 frontend
+> tests, production build**. This mode is explicitly unisolated and is not release
+> security evidence. The earlier separate-host blocker still applies to shared use.
+
+> Theme update, 28 October 2026: persistent dark/light mode, system preference,
+> early refresh initialization, cross-tab synchronization and themed Python editor
+> are implemented. All core checks passed: **183 backend tests, 37 frontend tests,
+> production build**. The running app serves the theme bootstrap as JavaScript.
+
+> Workspace/ETA update, 28 October 2026: private independent-study resume/search,
+> student assignment resume and progress, teacher classroom sections, optional
+> assignment deadlines and advisory generation-time ranges are implemented.
+> Core checks passed: **183 backend tests, 32 frontend tests, production build**.
+> ETA initial ranges are rough; clean comparable per-user worker timings refine
+> them after three samples. Queue waiting is excluded, and paused/recovered/
+> overrun jobs do not get a false countdown. This is fixture evidence, not a live
+> generation benchmark. The earlier browser-helper limitation still applies.
+
+> Source-workflow update, 28 October 2026: guided intake with staged uploads,
+> search/status filtering, multi-source selection, title editing and section-based
+> review are implemented. The required checks passed: **173 backend tests,
+> 26 frontend tests, production build**. The desktop/browser helper was unavailable,
+> so this pass has component interaction tests rather than a visual browser review.
+> The runner setup guide and read-only checker are available; the local checker
+> reports missing configuration, and no separate runner or live grading is claimed.
+
+> Source update, 28 October 2026: source-library/preview removal and attachment
+> removal are implemented. Configured local YouTube extraction now feeds the
+> source-review and independent lesson-planning flow. All core checks passed:
+> **168 backend tests, 21 frontend tests, production build**. YouTube tests use
+> provider fixtures; no live video extraction or model-quality claim is made.
+> Sources referenced by active lessons or pending preparation cannot be deleted.
+> Existing release blockers below remain open.
+
+> Current update, 27 October 2026: the local app is running, the full checks
+> passed (155 backend, 16 frontend and production build), and Python grading is
+> blocked pending a verified separate runner. The current project review found
+> an answer-key exposure and other release blockers. See
+> [PROJECT_ANALYSIS_2026-10-27.md](PROJECT_ANALYSIS_2026-10-27.md). The detailed
+> tables below retain their historical 25 October scope and evidence.
+
 Reviewed: 25 October 2026. Governing specification:
-[BTP2_Complete_Platform_Implementation_Plan (1).md](<BTP2_Complete_Platform_Implementation_Plan (1).md>).
+[Tinker_Complete_Platform_Implementation_Plan.md](<Tinker_Complete_Platform_Implementation_Plan.md>).
 The user approved the expanded scope on 22 October. Remaining services require
 guided setup. The budget remains free-only and no separate runner host is available.
 
@@ -137,7 +221,7 @@ universal extraction quality, real OAuth behavior or production capacity.
 
 | Service | Current state |
 | --- | --- |
-| Supabase PostgreSQL | BTP2 project provisioned with explicit free-only approval; migrations 001–004 applied; restricted login in ignored local `.env`; TLS verified |
+| Supabase PostgreSQL | Project provisioned under the legacy Supabase name BTP2 with explicit free-only approval; migrations 001–004 applied; restricted login in ignored local `.env`; TLS verified |
 | Google OAuth | Provider/redirect checks passed; user confirms real login. Refresh now waits for both session and profile; delayed-profile, token-refresh, account-switch, stale-response, timeout/retry and StrictMode regression tests pass. Live multi-account/logout/revocation acceptance remains pending |
 | Private R2 bucket | Not configured; no real signed-range/CORS/media-renewal test |
 | AI generation/narration | Ollama/Piper and Gemini paths implemented. Current platform selects Gemini with blank models and no key; Ollama unreachable, Piper/voices absent in current environment. Choose/install/evaluate a route; Gemini is optional for text lessons |

@@ -4,6 +4,7 @@ from sqlalchemy import select
 from server.database import Assessment, Asset, Attempt, Block, Curriculum, Job, LearningSession, Lesson
 from server.lessons.contracts import digest
 from server.worker.queue import enqueue
+from server.learning.adaptation import LEAD, VERSION, bounded_score, understanding
 
 
 def locked_session(db, user, session_id):
@@ -54,16 +55,22 @@ def view_session(db, session):
             "selected_block_id": session.selected_block_id, "position": session.position, "evidence": session.evidence,
             "clips": clips, "question": current_question(db, session) if session.state == "checkpoint" else None,
             "objectives": curriculum.blueprint.get("objectives", []), "manifest_revision": session.manifest_revision,
-            "continuation_job_id": session.continuation_job_id}
+            "continuation_job_id": session.continuation_job_id,
+            "adaptivity": adaptive_view(db, session, curriculum)}
 
 
 def select_objective(db, settings, session, objective_id, *, recap=False, misconception=None):
     curriculum = db.get(Curriculum, session.curriculum_id)
     lesson = db.get(Lesson, curriculum.lesson_id)
+    index = next(i for i, item in enumerate(curriculum.blueprint['objectives']) if item['id'] == objective_id)
+    if not lesson.course_id and not recap and index >= LEAD and not session.evidence.get(objective_id, {}).get('adaptive_plan'):
+        source = curriculum.blueprint['objectives'][index - LEAD]['id']
+        if session.evidence.get(source, {}).get('attempts'):
+            adapt_ahead(db, settings, session, source)
     adapted_hash = (session.evidence.get(objective_id) or {}).get("adapted_hash")
-    # Prefer anything already prepared so a learner never waits needlessly:
-    # recap for a failed check; otherwise the block adapted to earlier results,
-    # then a misconception-reinforced block, then the normal block.
+    plan = (session.evidence.get(objective_id) or {}).get('adaptive_plan') if not lesson.course_id and not recap else None
+    # Initial blocks stay normal; recaps handle failed checks. A committed
+    # adaptive plan must be played rather than silently bypassed by a base clip.
     if recap:
         choices = [("recap", "base")]
     else:
@@ -72,6 +79,11 @@ def select_objective(db, settings, session, objective_id, *, recap=False, miscon
     if lesson.course_id:
         # Classroom can choose only finite, reviewed variants; no live generation is published.
         choices = [x for x in choices if x[1] == "base"]
+    if plan:
+        choices = [('adapted', adapted_hash)]
+    elif not lesson.course_id and not recap and index < LEAD:
+        choices = [('normal', 'base')]
+        adapted_hash = None
     block = next((b for profile, context_hash in choices
                   if (b := ready_for_objective(db, curriculum.id, objective_id, profile=profile, context_hash=context_hash))), None)
     profile, context_hash = choices[0]
@@ -81,7 +93,7 @@ def select_objective(db, settings, session, objective_id, *, recap=False, miscon
         pending = db.scalar(select(Job).where(Job.kind == "block", Job.state.in_(["queued", "running"]),
             Job.payload["curriculum_id"].as_string() == curriculum.id, Job.payload["objective_id"].as_string() == objective_id,
             Job.payload["context_hash"].as_string() == adapted_hash).limit(1))
-        if pending is None:
+        if pending is None and not plan:
             profile, context_hash = "normal", "base"
     old_job = session.continuation_job_id
     session.objective_id, session.position = objective_id, {"clip": 0, "offset": 0}
@@ -99,6 +111,8 @@ def select_objective(db, settings, session, objective_id, *, recap=False, miscon
     else:
         payload = {"curriculum_id": curriculum.id, "objective_id": objective_id, "profile": profile,
                    "context_hash": context_hash, "misconception": misconception if profile == "reinforced" else None}
+        if plan:
+            payload = plan
         try:
             job = enqueue(db, settings, lesson.owner_id, "block", payload, scope=f"private:{lesson.owner_id}:{curriculum.id}", priority=0, consumer=session.id)
             session.selected_block_id, session.state, session.continuation_job_id = None, "waiting_for_block", job.id
@@ -148,6 +162,8 @@ def apply_grade(db, settings, session, attempt, result):
     entry = dict(session.evidence.get(objective_id, {}))
     entry["attempts"] = entry.get("attempts", 0) + 1
     entry.setdefault("first_attempt_passed", bool(result["passed"]))
+    entry.setdefault('first_score', bounded_score(result.get('score'), float(bool(result['passed']))))
+    entry['latest_score'] = bounded_score(result.get('score'), float(bool(result['passed'])))
     entry["misconception"] = result.get("misconception") or next(iter(result.get("failed_categories", [])), None) or entry.get("misconception")
     if result["passed"]:
         entry["status"] = "assisted" if entry.get("solution_shown") or entry.get("hint_assessment_id") == attempt.assessment_id else "passed"
@@ -188,68 +204,122 @@ def apply_grade(db, settings, session, attempt, result):
     return attempt.result
 
 
-def performance(session, objectives):
-    """What the learner showed so far: drives the adapted block two objectives ahead."""
-    titles = {x["id"]: x["title"] for x in objectives}
+def performance(session, objectives, *, through=None):
     rows = []
-    for identifier, entry in session.evidence.items():
-        if identifier in titles and entry.get("attempts"):
-            rows.append({"objective": titles[identifier], "first_attempt_passed": entry.get("first_attempt_passed"),
-                         "attempts": entry["attempts"], "status": entry.get("status"), "weak_point": entry.get("misconception")})
-    return rows
+    for index, objective in enumerate(objectives):
+        if through is not None and index > through:
+            break
+        entry = session.evidence.get(objective['id'], {})
+        if entry.get('attempts'):
+            rows.append({'objective': objective['title'], 'first_attempt_passed': entry.get('first_attempt_passed'),
+                         'attempts': entry['attempts'], 'status': entry.get('status'),
+                         'hints_used': entry.get('hints_used', 0), 'solution_shown': bool(entry.get('solution_shown')),
+                         'first_score': entry.get('first_score'), 'latest_score': entry.get('latest_score'),
+                         'weak_point': entry.get('misconception')})
+    return rows[-5:]
+
+
+def enqueue_initial_window(db, settings, curriculum, lesson, *, consumer=None):
+    if lesson.course_id:
+        return []
+    jobs = []
+    for objective in curriculum.blueprint['objectives'][1:LEAD]:
+        if ready_for_objective(db, curriculum.id, objective['id']):
+            continue
+        payload = {'curriculum_id': curriculum.id, 'objective_id': objective['id'], 'profile': 'normal',
+                   'context_hash': 'base', 'misconception': None}
+        previous = db.scalar(select(Job).where(Job.owner_id == lesson.owner_id, Job.kind == 'block',
+            Job.payload['curriculum_id'].as_string() == curriculum.id,
+            Job.payload['objective_id'].as_string() == objective['id'],
+            Job.payload['profile'].as_string() == 'normal', Job.payload['context_hash'].as_string() == 'base').limit(1))
+        if previous:
+            if previous.priority == 1 and previous.state == 'queued':
+                previous.priority = 2
+            jobs.append(previous)
+            continue
+        try:
+            jobs.append(enqueue(db, settings, lesson.owner_id, 'block', payload,
+                scope=f'private:{lesson.owner_id}:{curriculum.id}', priority=2, consumer=consumer))
+        except HTTPException as error:
+            if error.status_code != 429:
+                raise
+            break  # The session poll retries admission when capacity is available.
+    return jobs
 
 
 def adapt_ahead(db, settings, session, objective_id):
-    """After assessment k, prepare objective k+2 adapted to the learner (k+1 is already prepared)."""
+    """Assessment k fixes a teaching snapshot for block k+3, without rerendering on retries."""
     curriculum = db.get(Curriculum, session.curriculum_id)
     lesson = db.get(Lesson, curriculum.lesson_id)
-    objectives = curriculum.blueprint["objectives"]
-    index = next(i for i, x in enumerate(objectives) if x["id"] == objective_id)
-    if lesson.course_id or index + 2 >= len(objectives):
+    objectives = curriculum.blueprint['objectives']
+    index = next(i for i, x in enumerate(objectives) if x['id'] == objective_id)
+    if lesson.course_id or index + LEAD >= len(objectives):
         return None
-    target = objectives[index + 2]["id"]
-    summary = performance(session, objectives)
-    context_hash = digest({"performance": summary})
-    entry = {**session.evidence.get(target, {}), "adapted_hash": context_hash}
-    session.evidence = {**session.evidence, target: entry}
-    if ready_for_objective(db, curriculum.id, target, profile="adapted", context_hash=context_hash):
+    target = objectives[index + LEAD]
+    entry = dict(session.evidence.get(target['id'], {}))
+    plan = entry.get('adaptive_plan')
+    if not plan:
+        summary = performance(session, objectives, through=index)
+        adaptation = {**understanding(session.evidence, objectives, through=index, target=target),
+                      'based_on_objective': objective_id, 'assessment_number': index + 1,
+                      'target_number': index + LEAD + 1}
+        context_hash = digest({'algorithm': VERSION, 'performance': summary, 'adaptation': adaptation})
+        plan = {'curriculum_id': curriculum.id, 'objective_id': target['id'], 'profile': 'adapted',
+                'context_hash': context_hash, 'misconception': None, 'performance': summary, 'adaptation': adaptation}
+        entry.update(adapted_hash=context_hash, adaptive_plan=plan)
+        session.evidence = {**session.evidence, target['id']: entry}
+    if ready_for_objective(db, curriculum.id, target['id'], profile='adapted', context_hash=plan['context_hash']):
         return None
-    payload = {"curriculum_id": curriculum.id, "objective_id": target, "profile": "adapted", "context_hash": context_hash,
-               "misconception": None, "performance": summary}
+    previous = db.scalar(select(Job).where(Job.owner_id == lesson.owner_id, Job.kind == 'block',
+        Job.payload['curriculum_id'].as_string() == curriculum.id,
+        Job.payload['context_hash'].as_string() == plan['context_hash']).limit(1))
+    if previous:
+        return previous
     try:
-        return enqueue(db, settings, lesson.owner_id, "block", payload, scope=f"private:{lesson.owner_id}:{curriculum.id}", priority=1, consumer=session.id)
+        # This is requested rolling preparation, not disposable speculation.
+        return enqueue(db, settings, lesson.owner_id, 'block', plan,
+            scope=f'private:{lesson.owner_id}:{curriculum.id}', priority=2, consumer=session.id)
     except HTTPException as error:
         if error.status_code != 429:
             raise
-        return None
+        return None  # Keep the exact plan in session evidence for admission retry.
 
 
 def lookahead(db, settings, session):
-    if not settings.speculation_enabled:
-        return None
+    """Maintain only the three-block lead explicitly requested by the learner."""
     curriculum = db.get(Curriculum, session.curriculum_id)
     lesson = db.get(Lesson, curriculum.lesson_id)
-    if lesson.course_id or session.state != "playing":
+    if lesson.course_id or session.state in {'complete', 'complete_with_support'}:
         return None
-    objectives = curriculum.blueprint["objectives"]
-    index = next(i for i, x in enumerate(objectives) if x["id"] == session.objective_id)
-    if index + 1 == len(objectives):
-        return None
-    if ready_for_objective(db, curriculum.id, objectives[index + 1]["id"]):
-        return None
-    # Speculation has no right to use the slot while a selected continuation waits.
-    if db.scalar(select(Job.id).where(Job.state.in_(["running", "queued"]), Job.priority == 0).limit(1)):
-        return None
-    from server.database import AuditEvent
-    import time
-    from sqlalchemy import func
-    used = db.scalar(select(func.count()).select_from(AuditEvent).where(AuditEvent.action == "model_call", AuditEvent.created_at >= time.time() - 86400))
-    if used >= settings.daily_model_calls:
-        return None
-    payload = {"curriculum_id": curriculum.id, "objective_id": objectives[index + 1]["id"], "profile": "normal", "context_hash": "base", "misconception": None}
-    try:
-        return enqueue(db, settings, lesson.owner_id, "block", payload, scope=f"private:{lesson.owner_id}:{curriculum.id}", priority=1, consumer=session.id)
-    except HTTPException as error:
-        if error.status_code != 429:
-            raise
-        return None
+    queued = enqueue_initial_window(db, settings, curriculum, lesson, consumer=session.id)
+    objectives = curriculum.blueprint['objectives']
+    current = next((i for i, x in enumerate(objectives) if x['id'] == session.objective_id), 0)
+    for index, objective in enumerate(objectives):
+        target = index + LEAD
+        if target >= len(objectives):
+            break
+        if target < current or (target == current and session.selected_block_id):
+            continue
+        if session.evidence.get(objective['id'], {}).get('attempts'):
+            job = adapt_ahead(db, settings, session, objective['id'])
+            if job:
+                queued.append(job)
+    return queued[0] if queued else None
+
+
+def adaptive_view(db, session, curriculum):
+    lesson = db.get(Lesson, curriculum.lesson_id)
+    pending = []
+    current = next((i for i, item in enumerate(curriculum.blueprint['objectives']) if item['id'] == session.objective_id), 0)
+    for index, objective in enumerate(curriculum.blueprint['objectives']):
+        plan = session.evidence.get(objective['id'], {}).get('adaptive_plan')
+        if plan and index >= current:
+            pending.append({'objective_id': objective['id'], 'title': objective['title'], 'number': index + 1,
+                            'level': plan['adaptation']['level'],
+                            'based_on_assessment': plan['adaptation']['assessment_number']})
+    selected = db.get(Block, session.selected_block_id) if session.selected_block_id else None
+    return {'mode': 'reviewed_classroom' if lesson.course_id else 'rolling', 'lead_blocks': LEAD,
+            'total_blocks': len(curriculum.blueprint['objectives']),
+            'understanding': understanding(session.evidence, curriculum.blueprint['objectives']),
+            'current_teaching': selected.verification.get('adaptation') if selected else None,
+            'planned': pending}

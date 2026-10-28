@@ -1,5 +1,6 @@
 """Host-managed platform configuration; never returned wholesale to a client."""
 import os
+import sys
 from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
@@ -20,8 +21,10 @@ class PlatformSettings:
     runner_token: str = field(default="", repr=False)
     runner_language_id: int = 0
     runner_verified: bool = False
+    local_demo_python: bool = False
     text_model: str = ""
     verifier_model: str = ""
+    vision_model: str = ""
     google_oauth_verified: bool = False
     topic_sources: bool = False
     document_sources: bool = False
@@ -38,6 +41,14 @@ class PlatformSettings:
     def local(self):
         return self.profile == "local"
 
+    @property
+    def demo_runner(self):
+        return self.local and self.local_demo_python
+
+    @property
+    def runner_cache_key(self):
+        return f"local-demo:{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}" if self.demo_runner else self.runner_language_id
+
     @classmethod
     def from_env(cls):
         load_dotenv(PROJECT_DIR / ".env")
@@ -51,7 +62,9 @@ class PlatformSettings:
             runner_url=os.getenv("JUDGE0_URL", "").rstrip("/"), runner_token=os.getenv("JUDGE0_TOKEN", ""),
             runner_language_id=int(os.getenv("JUDGE0_PYTHON_LANGUAGE_ID", "0") or "0"),
             runner_verified=os.getenv("JUDGE0_ISOLATION_VERIFIED", "false").lower() == "true",
+            local_demo_python=os.getenv("PLATFORM_LOCAL_DEMO_PYTHON", "false").lower() == "true",
             text_model=os.getenv("PLATFORM_TEXT_MODEL", ""), verifier_model=os.getenv("PLATFORM_VERIFIER_MODEL", ""),
+            vision_model=os.getenv("PLATFORM_VISION_MODEL", ""),
             google_oauth_verified=os.getenv("GOOGLE_OAUTH_VERIFIED", "false").lower() == "true",
             topic_sources=os.getenv("PLATFORM_ENABLE_TOPIC_SOURCES", "false").lower() == "true",
             document_sources=os.getenv("PLATFORM_ENABLE_DOCUMENT_SOURCES", "false").lower() == "true",
@@ -69,17 +82,21 @@ class PlatformSettings:
             "database": bool(self.database_url),
             "authentication": self.local or bool(self.supabase_url and self.supabase_public_key and self.google_oauth_verified),
             "private_storage": self.local or bool(self.s3_endpoint and self.s3_bucket and self.s3_access_key and self.s3_secret_key),
-            "python_runner": self.local or bool(self.runner_url and self.runner_language_id and self.runner_verified),
+            "python_runner": self.demo_runner or bool(self.runner_url and self.runner_language_id and self.runner_verified),
             "generation_models": bool(self.text_model and self.verifier_model and (
                 os.getenv("PLATFORM_TEXT_PROVIDER", "gemini") == "ollama" or os.getenv("GEMINI_API_KEY", "") not in {"", "put_your_key_here"}) and (
                 os.getenv("PLATFORM_SPEECH_PROVIDER", "gemini") == "piper" or (os.getenv("PLATFORM_SPEECH_MODEL") and os.getenv("GEMINI_API_KEY", "") not in {"", "put_your_key_here"}))),
         }
 
+    @property
+    def extraction_model(self):
+        return self.vision_model or (self.text_model if os.getenv("PLATFORM_TEXT_PROVIDER", "gemini") == "gemini" else "")
+
     def source_features(self):
         storage = self.checks()["private_storage"]
-        vision = os.getenv("GEMINI_API_KEY", "") not in {"", "put_your_key_here"}
+        vision = bool(self.extraction_model and os.getenv("GEMINI_API_KEY", "") not in {"", "put_your_key_here"})
         if self.local:
-            return {"text": True, "topic": True, "document": True, "image": vision, "youtube": False}
+            return {"text": True, "topic": True, "document": True, "image": vision, "youtube": vision}
         return {"text": True, "topic": self.topic_sources,
                 "document": self.document_sources and storage and os.getenv("DOCUMENT_SANDBOX_VERIFIED", "false").lower() == "true",
                 "image": self.vision_sources and storage and vision,

@@ -15,6 +15,7 @@ from server.config import PROJECT_DIR, voices_dir
 from server.providers.base import GenerationError, inspect_audio
 from server.runtime import checkpoint, stop_process
 from server.owned_process import close_owned_job, spawn_owned
+from server.providers.piper_runtime import piper_device, require_cuda
 
 
 def installed_voices() -> list[dict]:
@@ -51,7 +52,11 @@ def voice_identity(voice_id: str) -> dict:
     except PackageNotFoundError as error:
         raise GenerationError("DEPENDENCY_MISSING", "The Piper speech distribution is not installed.",
                               "Install requirements-local.txt in the project Python environment.") from error
-    return {"provider": "piper", "voice": voice_id, "model_digest": file_hash(model),
+    device = piper_device()
+    if device == "cuda":
+        import onnxruntime
+        require_cuda(onnxruntime)
+    return {"provider": "piper", "voice": voice_id, "device": device, "model_digest": file_hash(model),
             "config_digest": file_hash(model.with_suffix(".onnx.json")), "engine_version": engine_version}
 
 
@@ -70,7 +75,7 @@ class PiperSpeechProvider:
         options = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
         self.process = spawn_owned(
             [sys.executable, "-u", "-m", "server.providers.piper_worker", str(model),
-             str(model.with_suffix(".onnx.json")), str(folder), str(self.rate)],
+             str(model.with_suffix(".onnx.json")), str(folder), str(self.rate), self.identity.get("device", "cpu")],
             cwd=PROJECT_DIR, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, encoding="utf-8", shell=False, **options)
 
@@ -83,7 +88,10 @@ class PiperSpeechProvider:
                 self.responses.put(line)
         self.reader = threading.Thread(target=read, daemon=True)
         self.reader.start()
-        if self._response().get("ready") is not True:
+        ready = self._response()
+        if ready.get("code") == "TTS_GPU_UNAVAILABLE":
+            raise GenerationError(ready["code"], ready["message"], ready.get("action"))
+        if ready.get("ready") is not True:
             raise GenerationError("TTS_FAILED", "Piper could not load the selected voice.",
                                   "Check that the voice and Piper package are compatible.")
 

@@ -131,14 +131,14 @@ class StructuredAuthor:
                 inventory.append({"source_version_id": packet["id"], "block_id": evidence["id"], **audit.model_dump()})
         return prepare_plan(self, inventory, packets, goal)
 
-    def author(self, blueprint, objective, packets, profile, misconception, performance=None, trace_check=None):
+    def author(self, blueprint, objective, packets, profile, misconception, performance=None, trace_check=None, adaptation=None):
         blueprint = focused_blueprint(blueprint, objective)
         data = {"fixed_curriculum": blueprint, "objective": objective, "original_evidence": packets,
-                "profile": profile, "misconception": misconception, "learner_performance": performance}
+                "profile": profile, "misconception": misconception, "learner_performance": performance, 'teaching_plan': adaptation}
         feedback, last = None, None
         for repair in range(3):
             try:
-                draft = self._author_draft(blueprint, objective, packets, profile, misconception, repair, feedback, performance)
+                draft = self._author_draft(blueprint, objective, packets, profile, misconception, repair, feedback, performance, adaptation)
             except GenerationError as error:
                 if error.code != "CONTENT_NEEDS_REVIEW":
                     raise
@@ -162,7 +162,7 @@ class StructuredAuthor:
                 raise GenerationError("INVALID_BLOCK_SCOPE", "The block changed the fixed objective or cited unrelated evidence.")
             review = self.ask(f"verify_{profile}_{repair}", self.settings.verifier_model, Verification,
                 "Independently verify this block against the ORIGINAL evidence and fixed curriculum. Check factual accuracy, objective coverage, prerequisites, "
-                "example inputs/outputs and visual trace states, and teaching clarity. Flag critical unsupported claims and any misleading diagram. "
+                "example inputs/outputs and visual trace states, and teaching clarity. Check that scaffolding and example difficulty follow teaching_plan without skipping coverage. Flag critical unsupported claims and any misleading diagram. "
                 "Approval means automated validation only; never claim teacher approval.", {**data, "draft": draft.model_dump()})
             if review.accepted():
                 return draft, review
@@ -173,15 +173,18 @@ class StructuredAuthor:
             return last
         raise GenerationError("CONTENT_NEEDS_REVIEW", "The block retains critical content findings after two repairs. An author must review it.")
 
-    def _author_draft(self, blueprint, objective, packets, profile, misconception, repair, feedback, performance=None):
+    def _author_draft(self, blueprint, objective, packets, profile, misconception, repair, feedback, performance=None, adaptation=None):
         data = {"fixed_curriculum": blueprint, "objective": objective, "original_evidence": packets,
-                "profile": profile, "misconception": misconception, "learner_performance": performance}
+                "profile": profile, "misconception": misconception, "learner_performance": performance, 'teaching_plan': adaptation}
         return self.ask(f"author_{profile}_{repair}", self.settings.text_model, BlockDraft,
                 "Author a complete teaching block for exactly this objective and profile. Explain assumptions and a consistent worked example. "
                 "A normal block has 4 to 6 scenes (about 2-4 minutes of narration): motivate, explain, show a worked example step by step, "
                 "point out a common mistake, and summarize. A recap has 2 or 3 compact scenes on the same concept. "
                 "An adapted block teaches this objective for a learner described by learner_performance: spend extra scenes and slower "
                 "worked examples on their weak points, and move briskly through what they already showed they know. "
+                "For adapted blocks follow teaching_plan.guidance and teaching_plan.level explicitly: supportive uses smaller examples and more intermediate visual steps; "
+                "balanced uses normal examples; challenge uses richer in-scope examples and less repetition. These scores are provisional evidence, not a diagnosis of ability. "
+                "Never lower coverage, reveal assessment keys, skip objectives or alter checkpoint difficulty. Only change teaching scaffolding, pacing and worked-example complexity. "
                 "Each scene has 3 to 8 semantic utterances (spoken sentences) and one visual. Choose the visual kind that fits the idea: "
                 "bullets (items: key points revealed one per step), compare (headers + rows table), array (items cells + pointers steps, for "
                 "indexing/searching/sorting), equation (items: LaTeX lines derived step by step), process (ordered steps), cycle (repeating steps), "

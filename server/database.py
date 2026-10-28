@@ -44,6 +44,8 @@ class Course(Record, Base):
     owner_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"), index=True)
     title: Mapped[str] = mapped_column(String(160))
     enrollment_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
+    enrollment_code: Mapped[str | None] = mapped_column(String(80), unique=True)
+    enrollment_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class Membership(Record, Base):
@@ -52,6 +54,8 @@ class Membership(Record, Base):
     course_id: Mapped[str] = mapped_column(ForeignKey("courses.id"), index=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("profiles.id"), index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    left_voluntarily: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Source(Record, Base):

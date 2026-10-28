@@ -58,8 +58,13 @@ class RevisionRoute(RouteInput):
 
 @router.get("/sessions")
 def session_list(db: DB, user: User):
-    rows = db.execute(select(LearningSession, Lesson).join(Curriculum, Curriculum.id == LearningSession.curriculum_id).join(Lesson, Lesson.id == Curriculum.lesson_id).where(LearningSession.user_id == user.id).order_by(LearningSession.created_at.desc()).limit(100))
-    return [{"id": session.id, "title": lesson.title, "state": session.state, "objective_id": session.objective_id} for session, lesson in rows]
+    rows = db.execute(select(LearningSession, Lesson, Curriculum).join(Curriculum, Curriculum.id == LearningSession.curriculum_id).join(Lesson, Lesson.id == Curriculum.lesson_id).where(LearningSession.user_id == user.id, Lesson.retired.is_(False)).order_by(LearningSession.created_at.desc()).limit(100))
+    return [{"id": session.id, "title": lesson.title, "state": session.state, "objective_id": session.objective_id,
+             "course_id": lesson.course_id, "assignment_id": session.assignment_id, "curriculum_id": curriculum.id,
+             "total_objectives": len(curriculum.blueprint.get('objectives', [])),
+             "covered_objectives": sum(x.get('status') in {'passed', 'assisted', 'unresolved'} for x in session.evidence.values()),
+             "passed_objectives": sum(x.get('status') == 'passed' for x in session.evidence.values())}
+            for session, lesson, curriculum in rows]
 
 
 @router.post("/sessions", status_code=201)
@@ -100,8 +105,9 @@ def start(body: StartSession, request: Request, db: DB, user: User):
 
 
 @router.get("/sessions/{session_id}")
-def session_detail(session_id: str, db: DB, user: User):
+def session_detail(session_id: str, request: Request, db: DB, user: User):
     session = locked_session(db, user, session_id)
+    lookahead(db, request.app.state.settings, session)
     settle_wait(db, session)
     db.flush()
     return view_session(db, session)
@@ -138,6 +144,7 @@ def progress(session_id: str, body: Progress, request: Request, db: DB, user: Us
             entry["viewed"] = True
             session.evidence = {**session.evidence, session.objective_id: entry}
     session.position = position
+    lookahead(db, request.app.state.settings, session)
     db.flush()
     return view_session(db, session)
 
@@ -262,8 +269,9 @@ def retry_grading(attempt_id: str, request: Request, db: DB, user: User):
 
 
 @router.get("/sessions/{session_id}/continuation")
-def continuation(session_id: str, db: DB, user: User):
+def continuation(session_id: str, request: Request, db: DB, user: User):
     session = locked_session(db, user, session_id)
+    lookahead(db, request.app.state.settings, session)
     settle_wait(db, session)
     job = db.get(Job, session.continuation_job_id) if session.continuation_job_id else None
     status = "ready" if session.state == "playing" else "blocked" if session.state == "recoverable_error" else "preparing"
@@ -377,11 +385,16 @@ def caption_access(session_id: str, asset_id: str, request: Request, db: DB, use
 @router.get("/reports/me")
 def own_report(db: DB, user: User):
     return [{"id": x.id, "curriculum_id": x.curriculum_id, "state": x.state, "evidence": x.evidence}
-            for x in db.scalars(select(LearningSession).where(LearningSession.user_id == user.id))]
+            for x in db.scalars(select(LearningSession).join(Curriculum, Curriculum.id == LearningSession.curriculum_id)
+                .join(Lesson, Lesson.id == Curriculum.lesson_id).where(LearningSession.user_id == user.id, Lesson.retired.is_(False)))]
 
 
 @router.get("/reports/courses/{course_id}")
 def course_report(course_id: str, db: DB, user: User):
     own_course(db, user, course_id)
-    rows = db.execute(select(LearningSession, Profile).join(Assignment, Assignment.id == LearningSession.assignment_id).join(Profile, Profile.id == LearningSession.user_id).where(Assignment.course_id == course_id))
-    return [{"session_id": session.id, "learner": profile.display_name, "state": session.state, "evidence": session.evidence} for session, profile in rows]
+    rows = db.execute(select(LearningSession, Profile, Lesson).join(Assignment, Assignment.id == LearningSession.assignment_id)
+        .join(Profile, Profile.id == LearningSession.user_id).join(Curriculum, Curriculum.id == LearningSession.curriculum_id)
+        .join(Lesson, Lesson.id == Curriculum.lesson_id).where(Assignment.course_id == course_id))
+    return [{"session_id": session.id, "learner": profile.display_name, "state": session.state,
+             'lesson_title': lesson.title, 'archived': lesson.retired, "evidence": session.evidence}
+            for session, profile, lesson in rows]

@@ -1,8 +1,8 @@
-# BTP2 Learning Studio
+# Tinker Learning Studio
 
 React/FastAPI teaching platform for private independent study and teacher-reviewed
 classrooms. The governing specification is
-[BTP2_Complete_Platform_Implementation_Plan (1).md](<BTP2_Complete_Platform_Implementation_Plan (1).md>).
+[Tinker_Complete_Platform_Implementation_Plan.md](<Tinker_Complete_Platform_Implementation_Plan.md>).
 The user approved this expanded scope on 22 October 2026.
 
 The platform implementation is **not a completed or deployed release**.

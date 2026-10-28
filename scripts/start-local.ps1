@@ -12,6 +12,11 @@ $python = Join-Path $root '.venv\Scripts\python.exe'
 $pg = Join-Path $local 'pgsql\bin'
 $pgdata = Join-Path $local 'pgdata'
 $pids = Join-Path $root '.run\local-pids.txt'
+$ffmpegRoot = Join-Path $local 'bin\ffmpeg'
+if (Test-Path -LiteralPath $ffmpegRoot) {
+    $ffmpeg = Get-ChildItem -LiteralPath $ffmpegRoot -Filter ffmpeg.exe -Recurse | Select-Object -First 1
+    if ($ffmpeg) { $env:PATH = $ffmpeg.DirectoryName + ';' + $env:PATH }
+}
 foreach ($required in @($python, (Join-Path $pg 'pg_ctl.exe'), (Join-Path $root 'client\dist\index.html'))) {
     if (-not (Test-Path -LiteralPath $required)) { throw "Missing $required. See LOCAL_PLATFORM.md." }
 }
@@ -31,7 +36,7 @@ if (-not (Test-Path -LiteralPath $pgdata)) {
 }
 if (-not (Listening 5433)) {
     # Wait for pg_ctl only; the server it launches keeps running in the background.
-    $ctl = Start-Process -FilePath (Join-Path $pg 'pg_ctl.exe') -ArgumentList @('-D', "`"$pgdata`"", '-l', "`"$(Join-Path $logs 'postgres.log')`"", '-w', 'start') -WindowStyle Hidden -PassThru
+    $ctl = Start-Process -FilePath (Join-Path $pg 'pg_ctl.exe') -ArgumentList @('-D', "`"$pgdata`"", '-l', "`"$(Join-Path $logs 'postgres.log')`"", '-o', '"-p 5433 -h 127.0.0.1"', '-w', 'start') -WindowStyle Hidden -PassThru
     $ctl.WaitForExit()
     if (-not (Listening 5433)) { throw 'PostgreSQL did not start. See .run\logs\postgres.log.' }
 }
@@ -44,8 +49,17 @@ if ($exists -ne '1') {
     Write-Output 'Created database btp2 and applied migrations.'
 }
 
-# 2. Ollama with models stored in .local\models.
-if (-not (Listening 11434)) {
+# 2. Start Ollama only when selected for platform text generation.
+# This additive migration is safe to rerun for an existing local database.
+& $psql -h 127.0.0.1 -p 5433 -U postgres -d btp2 -q -v ON_ERROR_STOP=1 -f 'migrations\005_classroom_management.sql' | Out-Null
+if ($LASTEXITCODE) { throw 'Classroom-management migration failed.' }
+$textProvider = $env:PLATFORM_TEXT_PROVIDER
+if (-not $textProvider -and (Test-Path -LiteralPath (Join-Path $root '.env'))) {
+    $providerLine = Select-String -LiteralPath (Join-Path $root '.env') -Pattern '^\s*PLATFORM_TEXT_PROVIDER\s*=' | Select-Object -Last 1
+    if ($providerLine) { $textProvider = ($providerLine.Line -split '=', 2)[1].Trim().Trim('"', "'") }
+}
+if ($textProvider -eq 'ollama' -and -not (Listening 11434)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $local 'ollama\ollama.exe'))) { throw 'Ollama is selected but not installed. See LOCAL_PLATFORM.md.' }
     $env:OLLAMA_HOST = '127.0.0.1:11434'; $env:OLLAMA_MODELS = Join-Path $local 'models'
     $env:OLLAMA_NO_CLOUD = '1'; $env:OLLAMA_NUM_PARALLEL = '1'; $env:OLLAMA_MAX_LOADED_MODELS = '1'
     # Smaller context cache keeps more of the model on a 4 GB laptop GPU.

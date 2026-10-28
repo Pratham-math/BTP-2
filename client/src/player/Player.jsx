@@ -6,9 +6,12 @@ import { api, post } from '../platform/api'
 import { useAuth } from '../platform/auth'
 import { Badge, IssueReport, Notice, PageHead } from '../platform/common'
 import { ScenePlayer } from '../remotion/ScenePlayer'
+import { useTheme } from '../platform/theme'
+import { AdaptiveStatus } from './AdaptiveStatus'
 
 function Checkpoint({ session, onResult, checkpointAction }) {
-  const { profile } = useAuth(), question = session.question
+  const { theme } = useTheme()
+  const { profile, config } = useAuth(), question = session.question
   const draftKey = `btp2:${profile.id}:${session.id}:${question.id}:${session.route_revision}:code`
   const [choice, setChoice] = useState(''), [choices, setChoices] = useState([]), [output, setOutput] = useState(''), [text, setText] = useState('')
   const [code, setCode] = useState(() => localStorage.getItem(draftKey) ?? session.position.code_draft ?? question.starter_code ?? '')
@@ -36,7 +39,7 @@ function Checkpoint({ session, onResult, checkpointAction }) {
     {['mcq', 'multiple'].includes(question.kind) && <fieldset className="answer-options"><legend className="sr-only">Choose your answer</legend>{question.options.map(option => <label key={option.id} className="answer-option"><input type={question.kind === 'mcq' ? 'radio' : 'checkbox'} name="answer" checked={question.kind === 'mcq' ? choice === option.id : choices.includes(option.id)} onChange={e => question.kind === 'mcq' ? setChoice(option.id) : setChoices(e.target.checked ? [...choices, option.id] : choices.filter(x => x !== option.id))} />{option.text}</label>)}</fieldset>}
     {question.kind === 'short' && <label>Your answer<textarea rows={5} value={text} maxLength={4000} onChange={e => setText(e.target.value)} placeholder="Explain in your own words (2-4 sentences)." /></label>}
     {question.kind === 'trace' && <label>Predicted output<textarea rows={5} value={output} maxLength={16000} spellCheck={false} onChange={e => setOutput(e.target.value)} /></label>}
-    {question.kind === 'python' && <><label id="code-label">Your Python solution</label><CodeMirror aria-labelledby="code-label" value={code} height="260px" extensions={[python()]} onChange={value => { setCode(value); localStorage.setItem(draftKey, value); setDraftStatus('Saving draft…') }} /><p className="muted" role="status">Standard-library Python · isolated runner · {draftStatus}.</p></>}
+    {question.kind === 'python' && <><label id="code-label">Your Python solution</label><CodeMirror theme={theme} aria-labelledby="code-label" value={code} height="260px" extensions={[python()]} onChange={value => { setCode(value); localStorage.setItem(draftKey, value); setDraftStatus('Saving draft…') }} /><p className="muted" role="status">Standard-library Python · {config?.runner_mode === 'local_demo' ? 'local demo runner' : 'isolated runner'} · {draftStatus}.</p></>}
     {question.public_examples?.map((x, i) => <pre key={i}>Input: {x.stdin}{'\n'}Output: {x.stdout}</pre>)}<Notice error>{error}</Notice><Notice>{hint}</Notice>
     <div className="row"><button disabled={busy || (question.kind === 'mcq' && !choice) || (question.kind === 'multiple' && !choices.length) || (question.kind === 'short' && !text.trim())}>{busy ? 'Submitting…' : 'Check answer'}</button><button type="button" className="text-button" disabled={busy} onClick={getHint}>Give me a hint</button></div>
   </form></section>
@@ -131,7 +134,7 @@ export function Player() {
   if (!session) return <Notice error={!!error}>{error || 'Restoring your learning session…'}</Notice>
   const objective = session.objectives.find(x => x.id === session.objective_id)
   const reviewing = session.objectives.find(x => x.id === session.position.reviewing_prerequisite)
-  return <><PageHead eyebrow="YOUR LEARNING PATH" title={reviewing ? `Prerequisite review: ${reviewing.title}` : objective?.title || 'Learning session'} action={<Badge>{session.state}</Badge>}>{reviewing ? `You will return to ${objective.title} after this recap. No repeated prerequisite quiz is required.` : 'Progress is saved at scene boundaries and checkpoints.'}</PageHead><Notice error>{error}</Notice><div className="player-layout"><section>
+  return <><PageHead eyebrow="YOUR LEARNING PATH" title={reviewing ? `Prerequisite review: ${reviewing.title}` : objective?.title || 'Learning session'} action={<Badge>{session.state}</Badge>}>{reviewing ? `You will return to ${objective.title} after this recap. No repeated prerequisite quiz is required.` : 'Progress is saved at scene boundaries and checkpoints.'}</PageHead><Notice error>{error}</Notice><div className="player-layout"><section><AdaptiveStatus adaptivity={session.adaptivity} objectiveId={session.objective_id} />
     {feedback?.feedback && <section className="feedback"><Badge>{feedback.passed ? 'Check passed' : 'Feedback'}</Badge><p>{feedback.feedback}</p>{feedback.objective_status && <Badge>{feedback.objective_status}</Badge>}{feedback.worked_solution && <p>{feedback.worked_solution}</p>}{feedback.reference_solution && <pre>{feedback.reference_solution}</pre>}{attempt?.state === 'service_failed' && <button onClick={retryGrade}>Retry grading saved code</button>}</section>}
     {session.state === 'playing' && <section className="video-panel">{media?.clipId === clip?.id && clip?.scene && clip.mime?.startsWith('audio') ? <ScenePlayer key={media.clipId}
       scene={clip.scene} audioUrl={media.url} captionUrl={media.caption} duration={clip.duration} index={clipIndex} total={session.clips.length}

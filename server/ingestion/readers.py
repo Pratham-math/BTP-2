@@ -27,13 +27,22 @@ def text_blocks(text, *, method="typed", location="Notes"):
 
 
 def youtube_id(url):
-    parsed = urlsplit(url)
-    if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port not in {None, 443}:
+    try:
+        parsed = urlsplit(url.strip())
+        valid = parsed.scheme == "https" and not parsed.username and not parsed.password and parsed.port in {None, 443}
+    except ValueError:
+        valid = False
+    if not valid:
         raise GenerationError("UNSUPPORTED_URL", "Use an HTTPS public YouTube watch URL.")
     if parsed.hostname == "youtu.be":
         video_id = parsed.path.strip("/")
-    elif parsed.hostname in {"www.youtube.com", "youtube.com"} and parsed.path == "/watch":
-        video_id = parse_qs(parsed.query).get("v", [""])[0]
+    elif parsed.hostname in {"www.youtube.com", "youtube.com", "m.youtube.com"}:
+        if parsed.path == "/watch":
+            video_id = parse_qs(parsed.query).get("v", [""])[0]
+        elif re.fullmatch(r"/(?:shorts|live|embed)/[a-zA-Z0-9_-]{11}/?", parsed.path):
+            video_id = parsed.path.strip("/").split("/")[1]
+        else:
+            video_id = ""
     else:
         raise GenerationError("UNSUPPORTED_URL", "Only public YouTube watch URLs are accepted.")
     if not re.fullmatch(r"[a-zA-Z0-9_-]{11}", video_id):

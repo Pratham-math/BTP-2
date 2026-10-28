@@ -10,7 +10,7 @@ from server.database import Base
 
 def schema_sql():
     dialect = postgresql.dialect()
-    statements = ["-- Generated baseline; apply once to an empty BTP2 database."]
+    statements = ["-- Generated baseline; apply once to an empty Tinker database."]
     for table in Base.metadata.sorted_tables:
         statements.append(str(CreateTable(table).compile(dialect=dialect)).strip() + ";")
         for index in sorted(table.indexes, key=lambda item: item.name):

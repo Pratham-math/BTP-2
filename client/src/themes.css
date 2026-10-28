@@ -1,0 +1,40 @@
+:root{color-scheme:light;--theme-bg:#f7f8f4;--theme-surface:#fcfdf9;--theme-text:#25372f;--theme-field:#fcfdf9;--theme-soft:#edf1e3;--theme-subtle:#f0f4e9}
+body{background:var(--theme-bg);color:var(--theme-text)}
+.workspace-controls{display:flex;align-items:center;gap:14px}.theme-toggle{padding:9px 12px;font-size:12px;white-space:nowrap}.login-theme-toggle{position:absolute;top:30px;right:35px;z-index:2}.theme-toggle:focus-visible{outline:2px solid var(--green);outline-offset:4px}
+:root[data-theme=dark]{color-scheme:dark;background:#101814;color:#e0e8e1;--theme-bg:#101814;--theme-surface:#18231d;--theme-text:#e0e8e1;--theme-field:#111b15;--theme-soft:#203126;--theme-subtle:#233328;--green:#a2d3af;--mint:#243a2b;--line:#35463a;--muted:#a8b6aa}
+:root[data-theme=dark] :is(.panel,.lesson-card,.list,.video-panel,.sidebar,.workspace-stats,.concept-node){background:var(--theme-surface);color:var(--theme-text);border-color:var(--line)}
+:root[data-theme=dark] :is(.workspace-start,.study-banner,.login-visual,.empty,.source-file-picker){background:var(--theme-soft);border-color:var(--line)}
+:root[data-theme=dark] :is(.badge,.job-eta,.feedback,.source-selection-bar,.workspace-action,.source-steps li span,.evidence-grid>div,.enrollment-share,.enrollment-code,.avatar,.banner-steps span,.empty>span,.completion>span){background:var(--theme-subtle);color:#c2dfc7;border-color:var(--line)}
+:root[data-theme=dark] :is(.workspace-action:hover,.secondary:hover,.sidebar nav a:hover){background:#2d4132}
+:root[data-theme=dark] :is(.sidebar nav a.active,.source-steps li[aria-current=step] span){background:#304b38;color:#d7efdb}
+:root[data-theme=dark] :is(.source-state.ready){background:#23452d;color:#bbe0bf}
+:root[data-theme=dark] .source-state.processing{background:#263a30;color:#bfd7c7}
+:root[data-theme=dark] :is(.source-state.review,.source-state.attention,.source-check){background:#3b301e;color:#ead29d}
+:root[data-theme=dark] :is(.brand,.concept-node strong,.empty h3){color:#d0e4d3}
+:root[data-theme=dark] :is(.page-intro,.lesson-card p,.workspace-start p,.workspace-action span,.sidebar nav a,.brand-sub,.nav-label,.sidebar-note p,.eyebrow,.study-banner p,.upload-panel p,.objective-list p,.transcript p,.loading-screen,.login-content>p:not(.eyebrow),.login-visual>p,.setup-note p,.list-row span:not(.badge),.empty){color:var(--muted)}
+:root[data-theme=dark] :is(input:not([type=radio]):not([type=checkbox]):not([type=file]),textarea,select){background:var(--theme-field);border-color:var(--line);color:var(--theme-text)}
+:root[data-theme=dark] ::placeholder{color:#8c9e90;opacity:1}
+:root[data-theme=dark] :is(input,textarea,select):focus-visible{outline:2px solid #a2d3af;outline-offset:2px}
+:root[data-theme=dark] :is(button,.button){background:#a2d3af;color:#12251a;border-color:#a2d3af}
+:root[data-theme=dark] :is(button,.button):hover{background:#bddfc3}
+:root[data-theme=dark] :is(button.secondary,.button.secondary){background:transparent;color:#c2dfc7;border-color:#49614e}
+:root[data-theme=dark] :is(button.secondary,.button.secondary):hover{background:#2d4132}
+:root[data-theme=dark] button.text-button{background:transparent;color:#a2d3af;border-color:transparent}
+:root[data-theme=dark] button.text-button:hover{background:#203126}
+:root[data-theme=dark] button.danger-text{background:transparent;color:#edae9e;border-color:transparent}
+:root[data-theme=dark] button.danger-text:hover{background:#3a2622;color:#f4c9bd}
+:root[data-theme=dark] button.danger-button{background:#edae9e;color:#2d1812;border-color:#edae9e}
+:root[data-theme=dark] button.danger-button:hover{background:#f4c9bd}
+:root[data-theme=dark] :is(.notice,.media-loading){background:#203a28;border-color:#405c43;color:#c7e0cb}
+:root[data-theme=dark] .notice.error{color:#f0b7a9;background:#39261f;border-color:#725044}
+:root[data-theme=dark] .due-overdue{color:#edc17e}
+:root[data-theme=dark] :is(pre,.code-input){background:#111b15;color:#d1e5d6;border-color:var(--line)}
+:root[data-theme=dark] :is(.list-row,.objective-number,.setup-note,.path-sidebar li,.diagram-orbit,.banner-steps:before,.banner-steps:after){border-color:var(--line)}
+:root[data-theme=dark] .path-sidebar li.current{border-color:#a2d3af}
+:root[data-theme=dark] :is(.file-button,.objective-number){color:#b5d2b5}
+:root[data-theme=dark] .generation-activity{background:#2a3d2e}
+:root[data-theme=dark] .generation-activity:before{background:#92ba88}
+:root[data-theme=dark] .spinner{border-color:#354e3a;border-top-color:#b1d7a7}
+:root[data-theme=dark] .node-two{background:#304b38;color:#d0e4d3}
+/* Uploaded originals and lesson artwork retain their source colours. */
+@media(max-width:780px){.workspace-controls{gap:8px}.workspace-controls>.badge{display:none}.theme-toggle{font-size:11px;padding:7px 9px}.login-theme-toggle{top:28px;right:25px}}

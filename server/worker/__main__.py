@@ -7,7 +7,7 @@ from pathlib import Path
 from threading import Event, Thread
 
 from sqlalchemy import select
-from server.assessment.runner import JudgeRunner
+from server.assessment.runner import configured_runner
 from server.config import PROJECT_DIR
 from server.database import Attempt, Job, LearningSession, make_engine, session_factory
 from server.object_store import ObjectStore
@@ -29,9 +29,9 @@ def execute(factory, settings, data, *, objects=None, runner=None):
     control, stop = JobControl(folder), Event()
     token = CURRENT_CONTROL.set(control)
     if settings.local:
-        from server.local_services import LocalObjectStore, LocalRunner
-        runner, objects = runner or LocalRunner(), objects or LocalObjectStore()
-    runner = runner or JudgeRunner(settings)
+        from server.local_services import LocalObjectStore
+        objects = objects or LocalObjectStore()
+    runner = runner or configured_runner(settings)
     objects = objects or ObjectStore(settings)
 
     def pulse():
