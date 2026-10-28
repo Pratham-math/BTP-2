@@ -35,6 +35,7 @@ def test_demo_config_is_honest_and_rejects_non_loopback_clients():
         assert config['python_enabled'] and config['runner_mode'] == 'local_demo' and not config['runner_isolated']
         ready = client.get('/api/ready').json()
         assert ready['checks']['python_runner'] and not ready['runner_isolated']
+        assert client.get('/api/config', headers={'X-Forwarded-For': '203.0.113.9'}).status_code == 403
     with TestClient(app, client=('192.0.2.1', 50000)) as client:
         assert client.get('/api/config').status_code == 403
 

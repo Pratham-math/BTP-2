@@ -16,3 +16,4 @@
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 .card-grid>.lesson-card{display:flex;flex-direction:column}.lesson-card>.badge{align-self:flex-start}.options-menu[open]>summary{margin-bottom:0}button.danger-text{color:#984536;background:transparent;border-color:transparent}button.danger-text:hover{background:#fbefeb;color:#81372a}
 body:has(.confirm-dialog[open]){overflow:hidden}
+@media(max-width:780px){input,select,textarea,.cm-content{font-size:16px!important}.sidebar nav{flex-wrap:wrap;overflow:visible}.page{padding:22px 14px 50px}.panel{padding:16px}button,.button{min-height:44px}.workspace-bar{padding:0 14px}.sidebar{padding:12px 14px}}

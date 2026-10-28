@@ -69,6 +69,11 @@ if ($textProvider -eq 'ollama' -and -not (Listening 11434)) {
 
 # 3. API (serves the built client) and the generation + grading workers.
 Start-Hidden 'api' $python "-m uvicorn server.platform:app --host 127.0.0.1 --port $Port --workers 1 --no-proxy-headers"
-Start-Hidden 'worker-generation' $python '-m server.worker --queue generation'
+# Several generation workers prepare blocks 1-3 (and each adapted block k+3) side by side.
+# Ollama still answers one prompt at a time, but narration and rendering overlap with it.
+$generationWorkers = if ($env:PLATFORM_GENERATION_WORKERS) { [int]$env:PLATFORM_GENERATION_WORKERS } elseif ($textProvider -eq 'ollama') { 2 } else { 3 }
+foreach ($slot in 1..$generationWorkers) {
+    Start-Hidden ($(if ($slot -eq 1) { 'worker-generation' } else { "worker-generation-$slot" })) $python "-m server.worker --queue generation --slot $slot"
+}
 Start-Hidden 'worker-grading' $python '-m server.worker --queue grading'
 Write-Output "Open http://127.0.0.1:$Port  (logs: .run\logs, stop: scripts\stop-local.ps1)"

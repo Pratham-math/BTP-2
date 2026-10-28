@@ -89,6 +89,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--queue", choices=["generation", "grading", "maintenance", "all"], default="generation")
+    # Jobs are claimed with SKIP LOCKED and fences, so several slots can share one queue safely.
+    parser.add_argument("--slot", type=int, default=1)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     configure_safe_logs()
@@ -102,7 +104,7 @@ def main():
     signal.signal(signal.SIGINT, lambda *_: stopped.set())
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, lambda *_: stopped.set())
-    lease_dir = PROJECT_DIR / ".run" / "platform-worker" / args.queue
+    lease_dir = PROJECT_DIR / ".run" / "platform-worker" / (args.queue if args.slot == 1 else f"{args.queue}-{args.slot}")
     lease_dir.mkdir(parents=True, exist_ok=True)
     lease = RuntimeLease(lease_dir)
     lease.acquire()

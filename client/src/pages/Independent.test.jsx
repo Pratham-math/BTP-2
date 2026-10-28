@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { NewLesson, SourceDetail, SourcesPage } from './Independent'
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), post: vi.fn() }))
-vi.mock('../platform/api', () => mocks)
+vi.mock('../platform/api', () => ({ ...mocks, media: async url => url }))
 vi.mock('../platform/auth', () => ({ useAuth: () => ({ config: { source_features: { text: true, youtube: true } } }) }))
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 

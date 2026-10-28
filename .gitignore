@@ -10,5 +10,7 @@ __pycache__/
 *.pyc
 client/node_modules/
 client/dist/
+client/dist-tinker/
+client/tinker-upload.zip
 data/
 .local/

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { api, post } from '../platform/api'
+import { api, media, post } from '../platform/api'
 import { Badge, Empty, Notice, PageHead, useResource } from '../platform/common'
 
 function DraftBlockEditor({ packet, block }) {
@@ -27,7 +27,7 @@ export function ReviewPage() {
     await post(`/api/reviews/${id}/${kind}`, kind === 'approve' ? { ...checks, findings, expected_fingerprint: review.data.fingerprint } : undefined); review.reload()
   } catch (e) { setError(e.message) } finally { setBusy(false) } }
   async function assign() { setBusy(true); setError(''); setMessage(''); try { const dueAt = due ? new Date(due).getTime() / 1000 : null; if (dueAt !== null && !Number.isFinite(dueAt)) throw new Error('Choose a valid due date.'); await post(`/api/courses/${review.data.course_id}/assignments`, { curriculum_id: id, due_at: dueAt }); setMessage('Assignment created for this exact version. Open the classroom to see it.') } catch (e) { setError(e.message) } finally { setBusy(false) } }
-  async function previewBlock(block) { try { const assets = await api(`/api/reviews/${id}/blocks/${block.id}/assets`); setPreview(assets) } catch (e) { setError(e.message) } }
+  async function previewBlock(block) { try { const assets = await api(`/api/reviews/${id}/blocks/${block.id}/assets`); setPreview(await Promise.all(assets.map(async x => ({ ...x, url: await media(x.url), caption_url: await media(x.caption_url) })))) } catch (e) { setError(e.message) } }
   async function fork() { try { const version = await post(`/api/lessons/versions/${id}/fork`, {}); navigate(`/reviews/${version.curriculum_id}`) } catch (e) { setError(e.message) } }
   const data = review.data
   if (!data) return <Notice error={!!review.error}>{review.error || 'Loading the review packet…'}</Notice>

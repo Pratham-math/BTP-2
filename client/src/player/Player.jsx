@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import CodeMirror from '@uiw/react-codemirror'
 import { python } from '@codemirror/lang-python'
-import { api, post } from '../platform/api'
+import { api, media as load, post } from '../platform/api'
 import { useAuth } from '../platform/auth'
 import { Badge, IssueReport, Notice, PageHead } from '../platform/common'
 import { ScenePlayer } from '../remotion/ScenePlayer'
@@ -80,13 +80,16 @@ export function Player() {
         const [asset, caption] = await Promise.all([api(`/api/assets/${clip.id}/access?session_id=${id}`), api(`/api/sessions/${id}/captions/${clip.id}`).catch(() => null)])
         if (!active) return
         mediaOffset.current = video.current?.currentTime || latest.current.position.offset || 0
-        setMedia({ ...asset, caption: caption?.url, clipId: clip.id })
+        const [url, captionUrl] = await Promise.all([load(asset.url), load(caption?.url)])
+        if (!active) return
+        setMedia({ ...asset, url, caption: captionUrl, clipId: clip.id })
         const next = latest.current.clips[clipIndex + 1]
-        if (next) { const signed = await api(`/api/assets/${next.id}/access?session_id=${id}`); if (active) { nextElement.preload = 'auto'; nextElement.src = signed.url; nextElement.load() } }
+        if (next && !import.meta.env.VITE_API_BASE_URL) { const signed = await api(`/api/assets/${next.id}/access?session_id=${id}`); if (active) { nextElement.preload = 'auto'; nextElement.src = signed.url; nextElement.load() } }
       } catch (e) { if (active) setError(e.message) }
     }
     setMedia(null); authorize()
-    const refresh = setInterval(authorize, 240000)
+    // Signed URLs expire, so re-sign them; tunnel blob URLs never expire and re-downloading is wasteful.
+    const refresh = import.meta.env.VITE_API_BASE_URL ? null : setInterval(authorize, 240000)
     return () => { active = false; clearInterval(refresh); nextElement.removeAttribute('src'); nextElement.load(); nextElement = null }
   }, [clip?.id, id])
 
@@ -129,7 +132,7 @@ export function Player() {
   async function result(value) { setAttempt(value); setFeedback(value.result); await reload() }
   async function revision(prerequisite_id = null) { try { adopt(await post(`/api/sessions/${id}/revision-route`, { expected_revision: latest.current.revision, prerequisite_id })); setFeedback(null) } catch (e) { setError(e.message) } }
   async function retryGrade() { try { setAttempt(await post(`/api/attempts/${attempt.id}/retry`)); await reload() } catch (e) { setError(e.message) } }
-  async function showFallback() { try { const value = await api(`/api/sessions/${id}/fallback`); setFallback(value) } catch (e) { setError(e.message) } }
+  async function showFallback() { try { const value = await api(`/api/sessions/${id}/fallback`); value.clips = await Promise.all(value.clips.map(async x => ({ ...x, url: await load(x.url), caption: await load(x.caption) }))); setFallback(value) } catch (e) { setError(e.message) } }
   async function resumeContinuation() { try { adopt(await post(`/api/sessions/${id}/resume-continuation`, { expected_revision: session.revision })); setError('') } catch (e) { setError(e.message) } }
   if (!session) return <Notice error={!!error}>{error || 'Restoring your learning session…'}</Notice>
   const objective = session.objectives.find(x => x.id === session.objective_id)

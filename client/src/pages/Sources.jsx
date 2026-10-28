@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { api, post } from '../platform/api'
+import { api, media, post } from '../platform/api'
 import { Badge, Empty, JobView, Notice, PageHead, useResource } from '../platform/common'
 import { useAuth } from '../platform/auth'
 
@@ -100,10 +100,11 @@ export function SourcesPage() {
 
 function SourceImage({ sourceId, block }) {
   const [visible, setVisible] = useState(false)
-  const preview = useResource(visible ? `/api/sources/${sourceId}/evidence/${block.id}/image` : null, 240000)
+  const preview = useResource(visible ? `/api/sources/${sourceId}/evidence/${block.id}/image` : null, 240000), [src, setSrc] = useState(null)
+  useEffect(() => { let on = true; media(preview.data?.url).then(x => on && setSrc(x)).catch(() => {}); return () => { on = false } }, [preview.data?.url])
   if (!block.image_key) return null
   return <aside className="source-image"><button className="secondary" onClick={() => setVisible(value => !value)}>{visible ? 'Hide page image' : 'Compare original page image'}</button>
-    {visible && <><Notice error>{preview.error}</Notice>{preview.data ? <img src={preview.data.url} alt={`Source reference for ${block.location}. Check its text, notation and diagrams against the extracted evidence.`} loading="lazy" referrerPolicy="no-referrer" /> : !preview.error && <p>Opening a private page preview…</p>}<p className="muted">Use the original to check text, symbols and diagrams.</p></>}
+    {visible && <><Notice error>{preview.error}</Notice>{src ? <img src={src} alt={`Source reference for ${block.location}. Check its text, notation and diagrams against the extracted evidence.`} loading="lazy" referrerPolicy="no-referrer" /> : !preview.error && <p>Opening a private page preview…</p>}<p className="muted">Use the original to check text, symbols and diagrams.</p></>}
   </aside>
 }
 

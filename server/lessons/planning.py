@@ -151,6 +151,7 @@ def prepare_plan(author, inventory, packets, goal, *, batch_limit=24000):
     if not objectives:
         raise GenerationError("SOURCE_OUTSIDE_SCOPE", "All selected sections were excluded. Choose a supported goal or provide relevant material.")
     blueprint = header.model_dump() | {'objectives': objectives, 'source_coverage': coverage, 'planning_batches': len(groups)}
+    from server.lessons.authoring import QUESTION_STYLE  # authoring imports this module
     assessments = []
     for obj in objectives:
         ask = lambda stage, task: author.ask(stage, author.settings.text_model, AssessmentPair,
@@ -167,7 +168,7 @@ def prepare_plan(author, inventory, packets, goal, *, batch_limit=24000):
             'Every solution must be a complete executable program with an input-reading and output-printing entry point, '
             'even when it also defines a function. stdin contains only plain input data, never Python calls or assertions; '
             'there is no injected function-test harness. State the same input/output format in the prompt and public examples. '
-            'Keep hints and all grading rules in the private key. Questions must be solvable from original evidence and prerequisites.',
+            'Keep hints and all grading rules in the private key. Questions must be solvable from original evidence and prerequisites. ' + QUESTION_STYLE,
             {'fixed_curriculum': focused_blueprint(blueprint, obj), 'original_evidence': evidence_for(packets, obj)})
         kind = obj.get('check_kind', 'mcq')
         try:

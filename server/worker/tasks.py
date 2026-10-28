@@ -13,7 +13,7 @@ from server.config import PROJECT_DIR
 from server.database import (Assessment, Asset, Attempt, Block, Curriculum, Job,
     LearningSession, Lesson, Source, SourceVersion)
 from server.ingestion.readers import text_blocks
-from server.lessons.authoring import StructuredAuthor
+from server.lessons.authoring import QUESTION_STYLE, StructuredAuthor
 from server.lessons.contracts import BlockDraft, Contract, CurriculumPlan, GradingKey, PlannedAssessment, Verification, digest
 from server.providers.base import GenerationError
 from server.runtime import run_command
@@ -74,7 +74,7 @@ def validate_questions(plan, packets, author, runner, context):
                 "A function definition alone is not executable output. Never put calls, assertions or Python code in stdin; "
                 "stdin is input data, not a test harness. Make the prompt, starter code, public examples, tests and solutions "
                 "agree on one precise input/output format. Preserve the objective's difficulty and meaningful edge cases. "
-                "Do not merely change expected outputs to match a broken solution or weaken tests to pass it.",
+                "Do not merely change expected outputs to match a broken solution or weaken tests to pass it. " + QUESTION_STYLE,
                 {"assessment": assessment.model_dump(), "validation_findings": failure,
                  "original_evidence": evidence_for(packets, objectives[original.objective_id]),
                  "fixed_curriculum": focused_blueprint(blueprint, objectives[original.objective_id])})

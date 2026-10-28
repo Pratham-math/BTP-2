@@ -6,7 +6,7 @@ import { Classroom, CoursePage } from './ClassroomWorkspace'
 import { LessonOptions } from '../platform/actions'
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), post: vi.fn() }))
-vi.mock('../platform/api', () => mocks)
+vi.mock('../platform/api', () => ({ ...mocks, media: async url => url }))
 vi.mock('../platform/auth', () => ({ useAuth: () => ({ profile: { display_name: 'Fixture', privilege: 'student' } }) }))
 beforeEach(() => {
   if (HTMLDialogElement.prototype.showModal) vi.spyOn(HTMLDialogElement.prototype, 'showModal').mockImplementation(function () { this.setAttribute('open', '') })

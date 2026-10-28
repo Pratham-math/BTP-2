@@ -59,6 +59,19 @@ def gemini_json(key, model, contents, contract, context, attempts=4):
             raise GenerationError("PROVIDER_REJECTED", f"Gemini rejected the request (HTTP {error.code}).") from error
 
 
+# Learners reported stiff, textbook-like narration and questions. These rules apply to every
+# generated block and checkpoint (changing them invalidates the cached stages, by design).
+SPOKEN_STYLE = ("Write utterances as a friendly tutor speaking to one student: plain everyday English, short sentences "
+    "(usually under 20 words), one idea per sentence, 'you' and 'we'. Explain any technical term in simple words the first time. "
+    "Narration is read aloud by a speech engine, so write what should be said: 'x squared' not 'x^2', 'is less than' not '<', "
+    "no markdown, code symbols or parentheses-heavy asides. Never mention 'the source', 'the text', 'the material' or 'the evidence'; "
+    "just teach. Avoid filler and hype such as 'delve', 'dive in', 'crucial', 'in this scene', 'let's explore'. ")
+QUESTION_STYLE = ("Write each question the way a good teacher asks in class: one clear, self-contained question in plain everyday "
+    "English that a student understands on the first read. Test understanding or applying the idea (a small concrete example or "
+    "scenario works well), not recall of exact wording. Never say 'according to the text', 'the provided material', 'the passage' "
+    "or 'the source'. No trick questions, double negatives, 'all/none of the above' or options that differ only in wording. "
+    "Options are short, similar in length, and each wrong option is a mistake real learners make. Hints nudge without giving the answer. ")
+
 class StructuredAuthor:
     version = "platform-author-v2"
 
@@ -185,7 +198,8 @@ class StructuredAuthor:
                 "For adapted blocks follow teaching_plan.guidance and teaching_plan.level explicitly: supportive uses smaller examples and more intermediate visual steps; "
                 "balanced uses normal examples; challenge uses richer in-scope examples and less repetition. These scores are provisional evidence, not a diagnosis of ability. "
                 "Never lower coverage, reveal assessment keys, skip objectives or alter checkpoint difficulty. Only change teaching scaffolding, pacing and worked-example complexity. "
-                "Each scene has 3 to 8 semantic utterances (spoken sentences) and one visual. Choose the visual kind that fits the idea: "
+                "Each scene has 3 to 8 semantic utterances (spoken sentences) and one visual. " + SPOKEN_STYLE + "Visual captions and bullet items use the same plain words. "
+                "Choose the visual kind that fits the idea: "
                 "bullets (items: key points revealed one per step), compare (headers + rows table), array (items cells + pointers steps, for "
                 "indexing/searching/sorting), equation (items: LaTeX lines derived step by step), process (ordered steps), cycle (repeating steps), "
                 "tree (hierarchy), plot (numeric relationship), code_trace (running a short program). Vary kinds across scenes. "
